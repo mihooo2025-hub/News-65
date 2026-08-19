@@ -1,0 +1,4 @@
+beautifulsoup4==4.13.4
+google-genai==1.31.0
+playwright==1.55.0
+requests==2.32.5

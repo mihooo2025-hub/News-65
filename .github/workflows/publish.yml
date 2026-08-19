@@ -51,6 +51,7 @@ jobs:
         run: python main.py
 
       - name: Commit state
+        if: always()
         run: |
           if git diff --quiet -- data/state.json; then
             echo "No state changes."

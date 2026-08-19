@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from google import genai
@@ -8,6 +9,7 @@ from google import genai
 from config import EXCLUDED_CATEGORIES, Settings
 from models import RewrittenArticle, SourceArticle
 
+logger = logging.getLogger(__name__)
 
 SCHEMA = {
     "type": "object",
@@ -18,7 +20,6 @@ SCHEMA = {
     },
     "required": ["title", "html", "categories"],
 }
-
 
 PROMPT_TEMPLATE = r"""
 أنت محرر رياضي محترف متخصص في أخبار كرة القدم للمواقع الإخبارية العربية.
@@ -81,25 +82,51 @@ class GeminiRewriter:
         self.settings = settings
         self.client = genai.Client(api_key=settings.gemini_api_key)
 
+    def _get_models_list(self) -> list[str]:
+        raw_model = self.settings.gemini_model or "gemini-2.5-flash"
+        models = [m.strip() for m in raw_model.split(",") if m.strip()]
+        return models if models else ["gemini-2.5-flash"]
+
     def rewrite(self, article: SourceArticle) -> RewrittenArticle:
-        allowed_for_model = [c for c in self.settings.categories if c not in EXCLUDED_CATEGORIES and c != "Uncategorized"]
+        allowed_for_model = [
+            c for c in self.settings.categories
+            if c not in EXCLUDED_CATEGORIES and c != "Uncategorized"
+        ]
+
         prompt = PROMPT_TEMPLATE.format(
             allowed_categories=json.dumps(allowed_for_model, ensure_ascii=False),
             excluded_categories=json.dumps(sorted(EXCLUDED_CATEGORIES), ensure_ascii=False),
             source_text=article.text,
         )
-        response = self.client.models.generate_content(
-            model=self.settings.gemini_model,
-            contents=prompt,
-            config={
-                "temperature": 0.2,
-                "max_output_tokens": 1800,
-                "response_mime_type": "application/json",
-                "response_json_schema": SCHEMA,
-            },
-        )
-        if not response.text:
+
+        models = self._get_models_list()
+        response = None
+        last_exception = None
+
+        for model_name in models:
+            try:
+                logger.info("Attempting rewriting with model: %s", model_name)
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={
+                        "temperature": 0.2,
+                        "max_output_tokens": 1800,
+                        "response_mime_type": "application/json",
+                        "response_json_schema": SCHEMA,
+                    },
+                )
+                if response and response.text:
+                    break
+            except Exception as exc:
+                logger.warning("Model %s failed: %s", model_name, exc)
+                last_exception = exc
+
+        if not response or not response.text:
+            if last_exception:
+                raise RuntimeError(f"Gemini generation failed on all models: {last_exception}")
             raise RuntimeError("Gemini returned an empty response")
+
         try:
             data = json.loads(response.text)
         except json.JSONDecodeError as exc:
@@ -107,6 +134,7 @@ class GeminiRewriter:
 
         title = str(data.get("title", "")).strip()
         html = str(data.get("html", "")).strip()
+
         categories = data.get("categories") if isinstance(data.get("categories"), list) else []
         categories = [str(c).strip() for c in categories if isinstance(c, str) and str(c).strip()]
         categories = list(dict.fromkeys(categories))
@@ -115,6 +143,7 @@ class GeminiRewriter:
         html = self._sanitize_html(html)
         if not title or not html:
             raise RuntimeError("Gemini output is missing title or body")
+
         return RewrittenArticle(title=title, html=html, categories=categories)
 
     @staticmethod
@@ -122,9 +151,11 @@ class GeminiRewriter:
         html = re.sub(r"```(?:html)?", "", html, flags=re.IGNORECASE).replace("```", "")
         html = re.sub(r"<\s*/?\s*body\b[^>]*>", "", html, flags=re.IGNORECASE)
         html = re.sub(r"<\s*/?\s*html\b[^>]*>", "", html, flags=re.IGNORECASE)
+
         paragraphs = re.findall(r"<p\b[^>]*>.*?</p>", html, flags=re.IGNORECASE | re.DOTALL)
         if paragraphs:
             return "\n".join(p.strip() for p in paragraphs[:4])
+
         text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip()
         return f"<p>{text}</p>" if text else ""

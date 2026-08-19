@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import re
 from urllib.parse import urlparse
@@ -18,6 +19,17 @@ class WordPressPublisher:
         self.session.auth = (settings.wp_username, settings.wp_app_password)
         self.session.headers.update({"User-Agent": settings.user_agent})
         self.category_cache: dict[str, int] | None = None
+
+    @staticmethod
+    def build_slug(url: str) -> str:
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+        slug_part = path.split("/")[-1] if path else "news"
+        slug_part = re.sub(r"[^\w\-]+", "-", slug_part, flags=re.UNICODE).strip("-")
+        if not slug_part:
+            slug_part = "news"
+        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:8]
+        return f"{slug_part[:50]}-{url_hash}"
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         response = self.session.request(method, url, timeout=self.settings.request_timeout_seconds, **kwargs)

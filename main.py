@@ -1,3 +1,9 @@
+"""
+main.py
+=======
+Main publishing workflow.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -5,106 +11,289 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from ai_rewriter import GeminiRewriter
-from config import FORCED_CATEGORY, Settings, load_settings
+from config import Settings, load_settings
 from models import RunReport
 from scraper_365scores import discover_and_fetch
-from state_store import load_state, mark_no_image, mark_processed, save_state, source_id
+from state_store import (
+    load_state,
+    mark_processed,
+    save_state,
+    source_id,
+)
 from telegram_reporter import TelegramReporter
 from wordpress_publisher import WordPressPublisher
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
+
 logger = logging.getLogger(__name__)
 
 
-def run(settings: Settings) -> RunReport:
-    report = RunReport()
-    state = load_state(settings.state_file)
+def run(settings: Settings) -> int:
 
-    logger.info("Starting source discovery")
-    candidates, discovery_errors, articles, fetch_errors = discover_and_fetch(
+    state = load_state(
+        settings.state_file
+    )
+
+    report = RunReport()
+
+    logger.info(
+        "Starting source discovery"
+    )
+
+    (
+        candidates,
+        discovery_errors,
+        articles,
+        fetch_errors,
+    ) = discover_and_fetch(
         settings.source_url,
         settings.max_articles_per_run,
     )
+
     for error in discovery_errors:
-        report.failed.append((settings.source_url, error))
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.lookback_hours)
-    candidate_ids = {source_id(item.url) for item in candidates}
-
-    filtered_articles = []
-    for article in articles:
-        article_id = source_id(article.url)
-        if article_id in state["processed"] or article_id in state["skipped_no_image"]:
-            report.duplicate += 1
-            continue
-        if article.published_at and article.published_at < cutoff:
-            report.skipped_old += 1
-            continue
-        if not article.image_url:
-            mark_no_image(state, article_id)
-            report.skipped_no_image += 1
-            continue
-        if not article.text or len(article.text) < 80:
-            report.failed.append((article.url, "Source article text is too short or empty"))
-            continue
-        filtered_articles.append(article)
+        report.failed.append(
+            (
+                settings.source_url,
+                error,
+            )
+        )
 
     for url, error in fetch_errors:
-        if source_id(url) in candidate_ids:
-            report.failed.append((url, error))
 
-    publisher = WordPressPublisher(settings)
-    rewriter = GeminiRewriter(settings)
+        report.failed.append(
+            (
+                url,
+                error,
+            )
+        )
 
-    for article in filtered_articles:
-        article_id = source_id(article.url)
-        slug = f"auto-365scores-{article_id}"
-        try:
-            logger.info("Rewriting: %s", article.title)
-            rewritten = rewriter.rewrite(article)
-            time.sleep(settings.rewrite_delay_seconds)
-
-            # create_draft includes the slug-based duplicate guard.
-            post_id, created = publisher.create_draft(article, rewritten, slug)
-            if not created:
-                mark_processed(state, article_id, post_id)
-                report.duplicate += 1
-                continue
-
-            mark_processed(state, article_id, post_id)
-            save_state(settings.state_file, state)
-            report.created.append((rewritten.title, article.url))
-            time.sleep(settings.publish_delay_seconds)
-            logger.info("Draft created: %s (%s)", rewritten.title, post_id)
-        except Exception as exc:
-            logger.exception("Failed processing %s", article.url)
-            report.failed.append((article.url, str(exc)))
-            save_state(settings.state_file, state)
-
-    save_state(settings.state_file, state)
-    return report
-
-
-def main() -> int:
-    settings = load_settings()
-    report = run(settings)
-
-    logger.info(
-        "Done | created=%s old=%s duplicate=%s no_image=%s failed=%s",
-        len(report.created), report.skipped_old, report.duplicate, report.skipped_no_image, len(report.failed),
+    cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(
+            hours=settings.lookback_hours
+        )
     )
 
-    try:
-        TelegramReporter(settings).send_report(report.created, report.failed)
-    except Exception:
-        logger.exception("Telegram report failed")
-        return 2 if report.created else 0
+    logger.info(
+        "Discovery returned candidates=%s fetched_articles=%s",
+        len(candidates),
+        len(articles),
+    )
 
-    return 0
+    filtered_articles = []
+
+    for article in articles:
+
+        article_id = source_id(
+            article.url
+        )
+
+        # Already successfully processed.
+        if article_id in state["processed"]:
+
+            report.duplicate += 1
+
+            continue
+
+        # Do not permanently mark no-image articles.
+        # The source image may become available later.
+        if not article.image_url:
+
+            report.skipped_no_image += 1
+
+            logger.info(
+                "Skipping article without featured image: %s",
+                article.url,
+            )
+
+            continue
+
+        if (
+            not article.text
+            or len(article.text) < 80
+        ):
+
+            report.failed.append(
+                (
+                    article.url,
+                    "Source article text is too short or empty",
+                )
+            )
+
+            continue
+
+        # Apply the 6-hour window when a trustworthy
+        # publication time exists.
+        #
+        # If no reliable timestamp is available,
+        # keep the article because the news index
+        # itself is the discovery source.
+        if (
+            article.published_at
+            and article.published_at < cutoff
+        ):
+
+            report.skipped_old += 1
+
+            continue
+
+        filtered_articles.append(
+            article
+        )
+
+    rewriter = GeminiRewriter(
+        settings
+    )
+
+    publisher = WordPressPublisher(
+        settings
+    )
+
+    for article in filtered_articles:
+
+        article_id = source_id(
+            article.url
+        )
+
+        try:
+
+            logger.info(
+                "Processing: %s",
+                article.title,
+            )
+
+            rewritten = rewriter.rewrite(
+                article
+            )
+
+            # Five-second delay after AI rewriting.
+            time.sleep(
+                settings.rewrite_delay_seconds
+            )
+
+            slug = publisher.build_slug(
+                article.url
+            )
+
+            post_id, created = publisher.create_draft(
+                article,
+                rewritten,
+                slug,
+            )
+
+            if not created:
+
+                mark_processed(
+                    state,
+                    article_id,
+                    post_id,
+                )
+
+                save_state(
+                    settings.state_file,
+                    state,
+                )
+
+                report.duplicate += 1
+
+                continue
+
+            mark_processed(
+                state,
+                article_id,
+                post_id,
+            )
+
+            save_state(
+                settings.state_file,
+                state,
+            )
+
+            report.created.append(
+                (
+                    rewritten.title,
+                    article.url,
+                )
+            )
+
+            logger.info(
+                "Draft created: %s (%s)",
+                rewritten.title,
+                post_id,
+            )
+
+            # Five-second delay after creating
+            # the WordPress draft.
+            time.sleep(
+                settings.publish_delay_seconds
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Failed processing %s",
+                article.url,
+            )
+
+            report.failed.append(
+                (
+                    article.url,
+                    str(exc),
+                )
+            )
+
+    logger.info(
+        "Done | created=%s old=%s duplicate=%s "
+        "no_image=%s failed=%s",
+        len(report.created),
+        report.skipped_old,
+        report.duplicate,
+        report.skipped_no_image,
+        len(report.failed),
+    )
+
+    # Always send a Telegram report, even when
+    # no new draft was created.
+    try:
+
+        TelegramReporter(
+            settings
+        ).send_report(
+            report.created,
+            report.failed,
+            skipped_old=report.skipped_old,
+            duplicate=report.duplicate,
+            no_image=report.skipped_no_image,
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Telegram report failed"
+        )
+
+        return (
+            2
+            if report.failed
+            else 0
+        )
+
+    return (
+        1
+        if report.failed
+        and not report.created
+        else 0
+    )
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        run(
+            load_settings()
+        )
+    )

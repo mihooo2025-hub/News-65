@@ -39,20 +39,19 @@ def is_probable_article_url(url: str) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
     
-    # فك ترميز الرابط لقراءة الكلمات العربية بوضوح
     path = unquote(parsed.path.lower()).rstrip("/")
     
-    # استبعاد المسار الرئيسي
     if path in {"/ar/news/magazine", "/news/magazine", ""}:
         return False
 
-    # قائمة استبعاد شاملة للأقسام، التاجات، الكويزات، والدوريات
+    # استبعاد الأقسام، الصفحات التجميعية، الإحصائيات، وجداول القنوات الناقلة
     non_article_prefixes = (
         "/login", "/signup", "/matches", "/teams", "/players",
         "/category/", "/content-tag/", "/tag/", "/magazine/category/",
         "/news/magazine/كرة-القدم", "/news/magazine/نادي-", "/news/magazine/الكرة-",
         "/news/magazine/الدوري-", "/news/magazine/منتخب-", "/news/magazine/دوري-",
-        "/news/magazine/كويز-"
+        "/news/magazine/كويز-", "/news/magazine/القنوات-الناقلة-لمباريات-اليوم-",
+        "/news/magazine/الأهداف-العكسية-كأس-العالم", "/news/magazine/بطاقة-حمراء-مجموعات"
     )
     
     if any(pattern in path for pattern in non_article_prefixes):
@@ -162,7 +161,7 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
         if _is_valid_article_image(val):
             return val
 
-    # 3. DOM fallback
+    # 3. DOM Extraction مع دعم Lazy Loading و Picture Elements
     for selector in ("article", "main", "[class*='article']", "[class*='Article']", "[class*='news']"):
         container = soup.select_one(selector)
         if not container:
@@ -175,9 +174,10 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
                 if _is_valid_article_image(first_src):
                     return first_src.strip()
                     
-            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or img.get("data-src-webp")
-            if src and _is_valid_article_image(src):
-                return src.strip()
+            for attr in ("src", "data-src", "data-lazy-src", "data-src-webp", "data-original"):
+                src = img.get(attr)
+                if src and _is_valid_article_image(src):
+                    return src.strip()
 
         for tag in container.find_all(True, style=True):
             style = tag.get("style", "")
@@ -300,11 +300,23 @@ async def fetch_article(page: Page, summary: ArticleSummary) -> SourceArticle:
         soup.find("h1").get_text(" ", strip=True) if soup.find("h1") else summary.title
     )
 
+    image_url = extract_featured_image(soup)
+
+    # Fallback: استخراج رابط الصورة مباشرة عبر Playwright إذا لم يجدها BS4
+    if not image_url:
+        try:
+            image_url = await page.evaluate("""() => {
+                const img = document.querySelector('article img, main img, [class*="article"] img');
+                return img ? (img.src || img.getAttribute('data-src') || '') : '';
+            }""")
+        except Exception:
+            pass
+
     return SourceArticle(
         url=summary.url,
         title=title.strip(),
         text=extract_article_text(soup).strip(),
-        image_url=normalize_url(summary.url, extract_featured_image(soup)),
+        image_url=normalize_url(summary.url, image_url),
         published_at=extract_published_at(soup) or summary.published_at,
     )
 

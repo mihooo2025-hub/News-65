@@ -5,6 +5,7 @@ Fetches football news from 365Scores Arabic news pages.
 Handles article discovery, URL normalization, metadata extraction,
 Arabic date parsing, robust content collection, and featured image
 extraction via BeautifulSoup + Playwright fallback.
+Optimized for high-concurrency execution on CI/CD platforms (GitHub Actions).
 """
 
 from __future__ import annotations
@@ -89,13 +90,6 @@ def _decode_path(path: str) -> str:
 
 
 def is_probable_article_url(url: str) -> bool:
-    """
-    Conservative article URL filter.
-
-    لا يتم استبعاد الروابط إلا إذا كانت واضحة أنها غير مقالية،
-    لتجنب فقدان أخبار حقيقية.
-    """
-
     if not url:
         return False
 
@@ -770,7 +764,7 @@ async def extract_featured_image_with_playwright(
                 });
 
                 await new Promise(resolve =>
-                    setTimeout(resolve, 1500)
+                    setTimeout(resolve, 500)
                 );
             }"""
         )
@@ -1121,11 +1115,6 @@ def extract_published_at(
 # ============================================================================
 
 def _normalize_article_line(text: str) -> str:
-    """
-    Normalize a single article text line while preserving
-    Arabic punctuation and sentence structure.
-    """
-
     if not text:
         return ""
 
@@ -1141,13 +1130,6 @@ def _normalize_article_line(text: str) -> str:
 
 
 def _is_noise_article_text(text: str) -> bool:
-    """
-    Reject obvious UI / navigation / advertising text.
-
-    This is intentionally conservative so real article sentences
-    are not accidentally removed.
-    """
-
     if not text:
         return True
 
@@ -1184,16 +1166,10 @@ def _is_noise_article_text(text: str) -> bool:
 def _collect_article_paragraphs(
     container,
 ) -> list[str]:
-    """
-    Collect paragraph-like content from an article container.
-
-    Uses p first, then common text blocks if necessary.
-    """
 
     paragraphs: list[str] = []
     seen: set[str] = set()
 
-    # النصوص الفعلية في المقال.
     nodes = container.select(
         "p, "
         "li, "
@@ -1214,7 +1190,6 @@ def _collect_article_paragraphs(
         if _is_noise_article_text(text):
             continue
 
-        # تجنب التكرار الناتج عن عناصر متداخلة.
         key = re.sub(
             r"\s+",
             " ",
@@ -1233,10 +1208,6 @@ def _collect_article_paragraphs(
 def _clean_article_container(
     container,
 ) -> None:
-    """
-    Remove obvious non-content elements before extracting
-    visible article text.
-    """
 
     for selector in (
         "script",
@@ -1272,21 +1243,7 @@ def _clean_article_container(
 def extract_article_text(
     soup: BeautifulSoup,
 ) -> str:
-    """
-    Extract the complete article text.
 
-    Strategy:
-    1. Prefer articleBody from JSON-LD only when it is substantial.
-    2. Search actual article containers.
-    3. Collect all paragraph-like elements.
-    4. Remove UI/navigation noise.
-    5. Preserve the complete text instead of selecting
-       the longest generic container.
-    """
-
-    # ------------------------------------------------------------------
-    # 1. JSON-LD articleBody
-    # ------------------------------------------------------------------
     json_ld_bodies: list[str] = []
 
     for item in extract_json_ld(soup):
@@ -1301,8 +1258,6 @@ def extract_article_text(
             if cleaned:
                 json_ld_bodies.append(cleaned)
 
-    # نستخدم articleBody فقط إذا كان واضحًا أنه محتوى مقال
-    # وليس description مختصرًا.
     if json_ld_bodies:
         best_body = max(
             json_ld_bodies,
@@ -1312,9 +1267,6 @@ def extract_article_text(
         if len(best_body) >= 200:
             return best_body
 
-    # ------------------------------------------------------------------
-    # 2. العثور على حاوية المقال
-    # ------------------------------------------------------------------
     selectors = (
         "article",
         "[data-testid*='article']",
@@ -1333,7 +1285,6 @@ def extract_article_text(
     )
 
     containers = []
-
     seen_containers = set()
 
     for selector in selectors:
@@ -1346,13 +1297,9 @@ def extract_article_text(
             seen_containers.add(node_id)
             containers.append(node)
 
-    # ------------------------------------------------------------------
-    # 3. جمع الفقرات من كل حاوية
-    # ------------------------------------------------------------------
     best_paragraphs: list[str] = []
 
     for container in containers:
-        # لا نريد تدمير الـ soup الأصلي إذا كان العنصر سيستخدم لاحقًا.
         container_copy = BeautifulSoup(
             str(container),
             "html.parser",
@@ -1379,9 +1326,6 @@ def extract_article_text(
         if combined_length > best_length:
             best_paragraphs = paragraphs
 
-    # ------------------------------------------------------------------
-    # 4. إذا وجدنا فقرات حقيقية، نعيدها كاملة.
-    # ------------------------------------------------------------------
     if best_paragraphs:
         full_text = "\n".join(
             best_paragraphs
@@ -1390,9 +1334,6 @@ def extract_article_text(
         if len(full_text) >= 80:
             return full_text
 
-    # ------------------------------------------------------------------
-    # 5. Fallback عام جدًا.
-    # ------------------------------------------------------------------
     paragraphs = []
 
     for p in soup.select("p"):
@@ -1415,9 +1356,6 @@ def extract_article_text(
     if paragraphs:
         return "\n".join(paragraphs).strip()
 
-    # ------------------------------------------------------------------
-    # 6. آخر fallback.
-    # ------------------------------------------------------------------
     text = soup.get_text(
         "\n",
         strip=True,
@@ -1441,57 +1379,32 @@ def extract_article_text(
 async def extract_article_text_with_playwright(
     page: Page,
 ) -> str:
-    """
-    Extract the article text directly from the live DOM.
-
-    This is important because 365Scores can load article paragraphs
-    dynamically after the initial HTML response.
-    """
 
     try:
-        # --------------------------------------------------------------
-        # تحفيز Lazy Loading وتحميل المحتوى الديناميكي.
-        # --------------------------------------------------------------
         await page.evaluate(
             """async () => {
-                const containers = document.querySelectorAll(
+                const article = document.querySelector(
                     [
                         'article',
                         '[data-testid*="article"]',
                         '[data-test*="article"]',
                         '[class*="article"]',
                         '[class*="Article"]',
-                        '[class*="news"]',
-                        '[class*="News"]',
                         'main'
                     ].join(',')
                 );
 
-                for (const container of containers) {
+                if (article) {
                     try {
-                        container.scrollIntoView({
+                        article.scrollIntoView({
                             block: 'center',
                             behavior: 'instant'
                         });
                     } catch (_) {}
                 }
 
-                window.scrollTo({
-                    top: document.body.scrollHeight,
-                    behavior: 'instant'
-                });
-
                 await new Promise(resolve =>
-                    setTimeout(resolve, 800)
-                );
-
-                window.scrollTo({
-                    top: 0,
-                    behavior: 'instant'
-                });
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, 1200)
+                    setTimeout(resolve, 500)
                 );
             }"""
         )
@@ -1513,33 +1426,6 @@ async def extract_article_text_with_playwright(
                     '[class*="NewsContent"]',
                     '[class*="content"]',
                     '[class*="Content"]'
-                ];
-
-                const noiseSelectors = [
-                    'script',
-                    'style',
-                    'noscript',
-                    'svg',
-                    'nav',
-                    'header',
-                    'footer',
-                    'aside',
-                    'form',
-                    'button',
-                    '[role="navigation"]',
-                    '[role="button"]',
-                    '[class*="share"]',
-                    '[class*="Share"]',
-                    '[class*="comment"]',
-                    '[class*="Comment"]',
-                    '[class*="related"]',
-                    '[class*="Related"]',
-                    '[class*="recommend"]',
-                    '[class*="Recommend"]',
-                    '[class*="advert"]',
-                    '[class*="Advert"]',
-                    '[class*="banner"]',
-                    '[class*="Banner"]'
                 ];
 
                 const noiseExact = new Set([
@@ -1626,7 +1512,7 @@ async def extract_article_text_with_playwright(
                         }
 
                         seen.add(text);
-                        paragraphs.push(text);
+                        paragraphs.append(text);
                     }
 
                     const currentLength =
@@ -1681,7 +1567,6 @@ async def collect_article_cards(
 ) -> list[ArticleSummary]:
 
     now = datetime.now(timezone.utc)
-
     results: dict[str, ArticleSummary] = {}
 
     async def collect_current_dom() -> None:
@@ -1756,17 +1641,12 @@ async def collect_article_cards(
 
     await collect_current_dom()
 
-    for _ in range(10):
+    # تقليل التكرار للتصفح السريع بدلاً من 10 مرات
+    for _ in range(3):
         try:
-            await page.mouse.wheel(
-                0,
-                5000,
-            )
-
-            await page.wait_for_timeout(900)
-
+            await page.mouse.wheel(0, 3000)
+            await page.wait_for_timeout(500)
             await collect_current_dom()
-
         except Exception:
             break
 
@@ -1781,28 +1661,19 @@ async def fetch_article(
     await page.goto(
         summary.url,
         wait_until="domcontentloaded",
-        timeout=45_000,
+        timeout=20_000,
     )
 
-    # انتظار تحميل الصفحة.
-    await page.wait_for_timeout(1_500)
+    await page.wait_for_timeout(800)
 
-    # --------------------------------------------------------------
-    # إعطاء 365Scores وقتًا إضافيًا لتحميل المقال نفسه.
-    # --------------------------------------------------------------
     try:
         await page.wait_for_load_state(
             "networkidle",
-            timeout=8_000,
+            timeout=3_000,
         )
     except Exception:
         pass
 
-    await page.wait_for_timeout(1_500)
-
-    # --------------------------------------------------------------
-    # تحميل المحتوى الديناميكي قبل أخذ HTML.
-    # --------------------------------------------------------------
     try:
         await page.evaluate(
             """async () => {
@@ -1827,16 +1698,13 @@ async def fetch_article(
                 }
 
                 await new Promise(resolve =>
-                    setTimeout(resolve, 1200)
+                    setTimeout(resolve, 500)
                 );
             }"""
         )
     except Exception:
         pass
 
-    # --------------------------------------------------------------
-    # أخذ HTML بعد انتظار المحتوى الديناميكي.
-    # --------------------------------------------------------------
     html_content = await page.content()
 
     soup = BeautifulSoup(
@@ -1880,20 +1748,9 @@ async def fetch_article(
     # ARTICLE TEXT
     # ==================================================================
 
-    # أول محاولة من HTML الكامل بعد الانتظار.
     article_text = extract_article_text(soup)
 
-    # إذا كان النص قصيرًا أو ناقصًا، نقرأ DOM الحي مباشرة.
     if len(article_text) < 200:
-        playwright_text = await extract_article_text_with_playwright(
-            page
-        )
-
-        if len(playwright_text) > len(article_text):
-            article_text = playwright_text
-
-    # محاولة أخيرة إذا كان هناك نص جزئي فقط.
-    if len(article_text) < 80:
         playwright_text = await extract_article_text_with_playwright(
             page
         )
@@ -1953,10 +1810,10 @@ async def discover_articles(
             await page.goto(
                 index_url,
                 wait_until="domcontentloaded",
-                timeout=45_000,
+                timeout=25_000,
             )
 
-            await page.wait_for_timeout(2_000)
+            await page.wait_for_timeout(1_000)
 
             for selector in (
                 "button:has-text('موافق')",
@@ -1971,7 +1828,7 @@ async def discover_articles(
                         await locator.first.scroll_into_view_if_needed()
 
                         await locator.first.click(
-                            timeout=5_000
+                            timeout=2_000
                         )
 
                 except Exception:
@@ -2020,12 +1877,13 @@ async def discover_articles(
 
 
 # ============================================================================
-# Fetch Articles
+# Fetch Articles (Concurrent Execution)
 # ============================================================================
 
 async def fetch_source_articles(
     source_url: str,
     candidates: list[ArticleSummary],
+    max_concurrency: int = 3,
 ) -> tuple[
     list[SourceArticle],
     list[tuple[str, str]],
@@ -2038,28 +1896,26 @@ async def fetch_source_articles(
         return articles, errors
 
     async with async_playwright() as playwright:
-        browser, page = await create_browser_context(
-            playwright
-        )
+        browser = await playwright.chromium.launch(headless=True)
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def worker(candidate: ArticleSummary):
+            async with semaphore:
+                page = await browser.new_page(
+                    locale="ar-SA",
+                    user_agent=USER_AGENT,
+                    timezone_id="Asia/Riyadh",
+                )
+                try:
+                    article = await fetch_article(page, candidate)
+                    articles.append(article)
+                except Exception as exc:
+                    errors.append((candidate.url, str(exc)))
+                finally:
+                    await page.close()
 
         try:
-            for candidate in candidates:
-                try:
-                    article = await fetch_article(
-                        page,
-                        candidate,
-                    )
-
-                    articles.append(article)
-
-                except Exception as exc:
-                    errors.append(
-                        (
-                            candidate.url,
-                            str(exc),
-                        )
-                    )
-
+            await asyncio.gather(*(worker(c) for c in candidates))
         finally:
             await browser.close()
 
@@ -2067,8 +1923,36 @@ async def fetch_source_articles(
 
 
 # ============================================================================
-# Main Entry Point
+# Main Entry Point (Optimized Async Execution)
 # ============================================================================
+
+async def discover_and_fetch_async(
+    source_url: str,
+    max_articles: int,
+) -> tuple[
+    list[ArticleSummary],
+    list[str],
+    list[SourceArticle],
+    list[tuple[str, str]],
+]:
+
+    candidates, discovery_errors = await discover_articles(
+        source_url,
+        max_articles,
+    )
+
+    articles, fetch_errors = await fetch_source_articles(
+        news_index_url(source_url),
+        candidates,
+    )
+
+    return (
+        candidates,
+        discovery_errors,
+        articles,
+        fetch_errors,
+    )
+
 
 def discover_and_fetch(
     source_url: str,
@@ -2080,23 +1964,9 @@ def discover_and_fetch(
     list[tuple[str, str]],
 ]:
 
-    candidates, discovery_errors = asyncio.run(
-        discover_articles(
+    return asyncio.run(
+        discover_and_fetch_async(
             source_url,
             max_articles,
         )
-    )
-
-    articles, fetch_errors = asyncio.run(
-        fetch_source_articles(
-            news_index_url(source_url),
-            candidates,
-        )
-    )
-
-    return (
-        candidates,
-        discovery_errors,
-        articles,
-        fetch_errors,
     )

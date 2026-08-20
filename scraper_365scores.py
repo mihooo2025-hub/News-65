@@ -34,13 +34,22 @@ def news_index_url(source_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}/ar/news/magazine/" if parsed.path.rstrip("/") in {"", "/ar"} else source_url
 
 
-def is_probable_article_url(url: str) -> False | bool:
+def is_probable_article_url(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
     path = parsed.path.lower()
-    if any(p in path for p in ("/login", "/signup", "/matches", "/teams", "/players")):
+    
+    # قائمة الكلمات الدالة على الصفحات غير الخبرية (الأقسام، التاجات، الصفحات التعريفية)
+    non_article_keywords = (
+        "/login", "/signup", "/matches", "/teams", "/players",
+        "/category/", "/content-tag/", "/tag/", "/magazine/category/",
+        "/كرة-القدم-", "/نادي-", "/الكرة-", "/الدوري-", "/منتخب-", "/دوري-"
+    )
+    
+    if any(k in path for k in non_article_keywords):
         return False
+        
     return "/news/magazine/" in path and not path.endswith("/news/magazine/")
 
 
@@ -128,7 +137,25 @@ def _is_valid_article_image(url_str: str) -> bool:
 
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
-    # 1. البحث في صور المقال الحقيقية عبر وسوم img و source و picture والـ Lazy Loading
+    # 1. البحث في JSON-LD Schema أولاً (الأكثر دقة في مقالات 365Scores)
+    for item in extract_json_ld(soup):
+        img = item.get("image")
+        if isinstance(img, str) and _is_valid_article_image(img):
+            return img.strip()
+        if isinstance(img, list):
+            for cand in img:
+                cand_url = cand if isinstance(cand, str) else cand.get("url") if isinstance(cand, dict) else ""
+                if cand_url and _is_valid_article_image(str(cand_url)):
+                    return str(cand_url).strip()
+        if isinstance(img, dict) and img.get("url") and _is_valid_article_image(str(img["url"])):
+            return str(img["url"]).strip()
+
+    # 2. الاعتماد على Meta Tags (og:image)
+    if val := first_meta(soup, "og:image", "twitter:image"):
+        if _is_valid_article_image(val):
+            return val
+
+    # 3. البحث داخل عناصر المقال DOM
     for selector in ("article", "main", "[class*='article']", "[class*='Article']", "[class*='news']"):
         container = soup.select_one(selector)
         if not container:
@@ -151,24 +178,6 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
                 match = re.search(r'url\(([\'"]?)(.*?)\1\)', style)
                 if match and _is_valid_article_image(match.group(2)):
                     return match.group(2).strip()
-
-    # 2. البحث في JSON-LD Schema
-    for item in extract_json_ld(soup):
-        img = item.get("image")
-        if isinstance(img, str) and _is_valid_article_image(img):
-            return img.strip()
-        if isinstance(img, list):
-            for cand in img:
-                cand_url = cand if isinstance(cand, str) else cand.get("url") if isinstance(cand, dict) else ""
-                if cand_url and _is_valid_article_image(str(cand_url)):
-                    return str(cand_url).strip()
-        if isinstance(img, dict) and img.get("url") and _is_valid_article_image(str(img["url"])):
-            return str(img["url"]).strip()
-
-    # 3. الاعتماد على Meta Tags بشرط ألا تكون الصورة العامة للموقع
-    if val := first_meta(soup, "og:image", "twitter:image"):
-        if _is_valid_article_image(val):
-            return val
 
     return ""
 

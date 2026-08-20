@@ -23,7 +23,7 @@ from models import ArticleSummary, SourceArticle
 # ============================================================================
 
 ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 DEFAULT_LOGO_PATTERNS = ("logo", "icon", "avatar", "favicon", "placeholder", "default", "no-image")
 ARTICLE_ROOT = "/ar/news/magazine"
 
@@ -55,7 +55,8 @@ def is_probable_article_url(url: str) -> bool:
             return False
         
         slug = rel_path.split("/")[0]
-        if re.match(r"^(القنوات-الناقلة|إحصائيات|احصائيات)", slug) or slug in {"الأهداف-العكسية-كأس-العالم", "بطاقة-حمراء-مجموعات"}:
+        # تصفية روابط الأندية والأقسام لضمان عدم معاملتها كمقالات
+        if re.match(r"^(القنوات-الناقلة|إحصائيات|احصائيات|نادي-|منتخب-|فريق-)", slug) or slug in {"الأهداف-العكسية-كأس-العالم", "بطاقة-حمراء-مجموعات"}:
             return False
         return True
     except Exception:
@@ -138,6 +139,7 @@ def _is_valid_image(url: str) -> bool:
 
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
+    # 1. الاستخراج من بيانات JSON-LD
     for item in extract_json_ld(soup):
         for k in ("image", "primaryImageOfPage", "thumbnailUrl"):
             val = item.get(k)
@@ -145,12 +147,19 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
             if isinstance(img, str) and _is_valid_image(img):
                 return img.strip()
 
+    # 2. الاستخراج من Meta tags
     meta = first_meta(soup, "og:image", "twitter:image")
     if _is_valid_image(meta):
         return meta
 
-    for img in soup.select("article img, main img, [class*='article'] img"):
-        src = img.get("src") or img.get("data-src")
+    # 3. الاستخراج من العناصر بالصفحة مع دعم التحميل الكسول (Lazy Loading)
+    for img in soup.select("article img, main img, [class*='article'] img, img"):
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-lazy-src")
+            or img.get("data-original")
+        )
         if src and _is_valid_image(src):
             return src.strip()
     return ""
@@ -197,12 +206,12 @@ async def extract_playwright_fallbacks(page: Page) -> tuple[str, str]:
             const isVal = (u) => u && !u.startsWith('data:') && !u.endsWith('.svg') && !['logo','icon','avatar'].some(p => u.includes(p));
             let img = '';
             for (let el of document.querySelectorAll('article img, main img, img')) {
-                let src = el.currentSrc || el.src || el.getAttribute('data-src');
+                let src = el.currentSrc || el.src || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original');
                 if (isVal(src)) { img = src; break; }
             }
             let text = [];
             for (let p of document.querySelectorAll('article p, main p, p')) {
-                let t = p.innerText.trim();
+                let t = p.innerText.strip ? p.innerText.strip() : p.innerText.trim();
                 if (t.length > 15) text.push(t);
             }
             return { image: img, text: text.join('\\n') };
@@ -270,7 +279,16 @@ async def fetch_article(page: Page, summary: ArticleSummary) -> SourceArticle:
 
 async def create_browser_context(playwright):
     browser = await playwright.chromium.launch(headless=True)
-    page = await browser.new_page(locale="ar-SA", user_agent=USER_AGENT, timezone_id="Asia/Riyadh")
+    context = await browser.new_context(
+        locale="ar-SA",
+        user_agent=USER_AGENT,
+        timezone_id="Asia/Riyadh",
+        extra_http_headers={
+            "Accept-Language": "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.365scores.com/",
+        }
+    )
+    page = await context.new_page()
     return browser, page
 
 
@@ -310,7 +328,16 @@ async def fetch_source_articles(source_url: str, candidates: list[ArticleSummary
 
         async def worker(candidate: ArticleSummary):
             async with semaphore:
-                page = await browser.new_page(locale="ar-SA", user_agent=USER_AGENT, timezone_id="Asia/Riyadh")
+                context = await browser.new_context(
+                    locale="ar-SA",
+                    user_agent=USER_AGENT,
+                    timezone_id="Asia/Riyadh",
+                    extra_http_headers={
+                        "Accept-Language": "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+                        "Referer": "https://www.365scores.com/",
+                    }
+                )
+                page = await context.new_page()
                 try:
                     art = await fetch_article(page, candidate)
                     articles.append(art)
@@ -318,6 +345,7 @@ async def fetch_source_articles(source_url: str, candidates: list[ArticleSummary
                     errors.append((candidate.url, str(exc)))
                 finally:
                     await page.close()
+                    await context.close()
 
         try:
             await asyncio.gather(*(worker(c) for c in candidates))

@@ -3,7 +3,8 @@ scraper_365scores.py
 ====================
 Fetches football news from 365Scores Arabic news pages.
 Handles article discovery, URL normalization, metadata extraction,
-Arabic date parsing, and robust content collection via Playwright & BeautifulSoup.
+Arabic date parsing, robust content collection, and featured image
+extraction via BeautifulSoup + Playwright fallback.
 """
 
 from __future__ import annotations
@@ -36,9 +37,8 @@ USER_AGENT = (
     "Chrome/138.0.0.0 Safari/537.36"
 )
 
-# IMPORTANT:
-# Do NOT include "365scores" here.
-# Legitimate article images can be hosted on a 365Scores CDN/domain.
+# لا نضع "365scores" هنا، لأن صور المقالات الحقيقية قد تكون مستضافة
+# على نطاقات أو مسارات تابعة لـ 365Scores.
 DEFAULT_LOGO_PATTERNS = (
     "logo",
     "icon",
@@ -47,139 +47,20 @@ DEFAULT_LOGO_PATTERNS = (
     "placeholder",
     "default-image",
     "default_image",
+    "no-image",
+    "no_image",
 )
 
 ARTICLE_ROOT = "/ar/news/magazine"
 
-# Paths that are definitely not individual articles.
-BLOCKED_PATH_PREFIXES = (
-    "/login",
-    "/signup",
-    "/matches",
-    "/teams",
-    "/players",
-    "/category/",
-    "/content-tag/",
-    "/tag/",
-    "/magazine/category/",
-)
-
-# Exact standalone sections that can appear below /news/magazine/
-BLOCKED_SECTION_SLUGS = {
-    "كرة-القدم",
-    "كرة-القدم-الإنجليزية",
-    "كرة-القدم-الاسبانية",
-    "كرة-القدم-الإسبانية",
-    "كرة-القدم-الإيطالية",
-    "كرة-القدم-الألمانية",
-    "كرة-القدم-الفرنسية",
-    "الكرة-العربية",
-    "كرة-القدم-السعودية",
-    "كرة-القدم-الإماراتية",
-    "كرة-القدم-المصرية",
-    "كرة-القدم-المغربية",
-    "أخبار",
-    "أخبار-عامة",
-    "تقديم-المباريات",
-    "انتقالات-وشائعات",
-    "مقابلات-حصرية",
-    "تقارير-خاصة",
-    "خاص-365scores",
-    "لايت-365scores",
-    "بطولات-ودوريات",
-    "الدوري-الإنجليزي",
-    "الدوري-الإسباني",
-    "الدوري-السعودي",
-    "الدوري-المصري-الممتاز",
-    "الدوري-المغربي",
-    "الدوري-العراقي",
-    "الدوري-الإماراتي",
-    "دوري-روشن-السعودي",
-    "دوري-أبطال-أوروبا",
-    "دوري-أبطال-آسيا-للنخبة",
-    "دوري-أبطال-إفريقيا",
-    "المنتخبات-العربية",
-    "مباريات-اليوم",
-    "أرشيف-كرة-القدم",
-    "رياضات-أخرى",
-}
-
-# Sections for clubs / national teams / competitions that commonly have
-# their own direct slug.
-BLOCKED_SLUG_PREFIXES = (
-    "النادي-",
-    "نادي-",
-    "منتخب-",
-    "دوري-",
-    "الدوري-",
-    "كأس-",
-    "بطولات-",
-)
-
-# Daily broadcast articles.
-BROADCAST_ARTICLE_RE = re.compile(
-    r"^القنوات-الناقلة(?:-لمباريات)?(?:-مباراة)?(?:-|$)",
-    re.IGNORECASE,
-)
-
-# Statistics / archive pages that are not normal news.
-STATISTICS_RE = re.compile(
-    r"^(?:إحصائيات|احصائيات)(?:-|$)",
-    re.IGNORECASE,
-)
-
-WORLD_CUP_STATS_RE = re.compile(
-    r"(?:إحصائيات|احصائيات).*(?:كأس-العالم|المونديال)",
-    re.IGNORECASE,
-)
-
-SPECIAL_NON_ARTICLE_PATTERNS = (
-    "الأهداف-العكسية-كأس-العالم",
-    "بطاقة-حمراء-مجموعات",
-)
-
-# Common direct section pages.
-# These are exact slugs rather than broad substring matching so that a real
-# article such as "الأهلي يعلن التعاقد..." is NOT accidentally rejected.
-COMMON_TEAM_SECTION_SLUGS = {
-    "الهلال",
-    "النصر",
-    "الأهلي",
-    "الاتحاد",
-    "الشباب",
-    "القادسية",
-    "الفتح",
-    "التعاون",
-    "الاتفاق",
-    "الرائد",
-    "الوحدة",
-    "الفيحاء",
-    "الخلود",
-    "ضمك",
-    "الرياض",
-    "الأخدود",
-    "مانشستر-سيتي",
-    "مانشستر-يونايتد",
-    "ليفربول",
-    "أرسنال",
-    "تشيلسي",
-    "توتنهام",
-    "ريال-مدريد",
-    "برشلونة",
-    "أتلتيكو-مدريد",
-    "يوفنتوس",
-    "ميلان",
-    "إنتر",
-    "بايرن-ميونخ",
-    "باريس-سان-جيرمان",
-}
-
 
 def normalize_url(base_url: str, value: str) -> str:
+    """Convert relative URLs to absolute URLs and remove fragments."""
     if not value:
         return ""
 
     value = html.unescape(str(value)).strip()
+
     if not value:
         return ""
 
@@ -197,45 +78,32 @@ def news_index_url(source_url: str) -> str:
 
 def _decode_path(path: str) -> str:
     """
-    Decode percent-encoded Arabic paths several times.
-    This handles links such as:
+    Decode percent-encoded Arabic URLs safely.
+    Handles paths containing values such as:
     %d9%83%d8%b1%d8%a9
     """
     decoded = path or ""
 
     for _ in range(3):
         new_value = unquote(decoded)
+
         if new_value == decoded:
             break
+
         decoded = new_value
 
     return decoded
 
 
-def _clean_slug(value: str) -> str:
-    value = unquote(value or "")
-    value = value.strip().strip("/")
-    value = re.sub(r"\s+", "-", value)
-    return value.lower()
-
-
 def is_probable_article_url(url: str) -> bool:
     """
-    Strict pre-discovery filtering.
+    Conservative article URL filter.
 
-    Rejects:
-    - team / club sections
-    - national-team sections
-    - league / category sections
-    - daily broadcast pages
-    - statistics pages
-    - pagination
-    - malformed/truncated URLs
-    - obvious non-article sections
+    IMPORTANT:
+    The goal is NOT to aggressively reject possible articles.
+    A genuine article is preferred over accidentally losing news.
 
-    Accepts:
-    - normal /ar/news/magazine/<slug> article URLs
-    - article URLs using ?p=<numeric_id>
+    Only reject URLs that are clearly not individual news articles.
     """
 
     if not url:
@@ -249,33 +117,29 @@ def is_probable_article_url(url: str) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
 
-    if parsed.netloc.lower() not in {
-        "365scores.com",
-        "www.365scores.com",
-    }:
+    path = _decode_path(parsed.path).lower().rstrip("/")
+
+    # يجب أن يكون الرابط داخل قسم الأخبار العربية للمجلة.
+    if not path.startswith(ARTICLE_ROOT):
         return False
 
-    path = _decode_path(parsed.path).rstrip("/")
-    path_lower = path.lower()
-
     # ------------------------------------------------------------------
-    # 1. Query-based WordPress-style article:
-    #    /ar/news/magazine/?p=462192
+    # دعم المقالات التي تستخدم:
+    # /ar/news/magazine/?p=123456
     # ------------------------------------------------------------------
-    if path_lower == ARTICLE_ROOT:
+    if path == ARTICLE_ROOT:
         query = parse_qs(parsed.query)
-
         post_ids = query.get("p", [])
-        if post_ids and any(re.fullmatch(r"\d+", x or "") for x in post_ids):
-            return True
 
-        # Bare magazine index is NOT an article.
-        return False
+        return any(
+            re.fullmatch(r"\d+", post_id or "")
+            for post_id in post_ids
+        )
 
     # ------------------------------------------------------------------
-    # 2. Only pages inside the Arabic news magazine are considered.
+    # يجب أن يكون هناك شيء بعد /ar/news/magazine/
     # ------------------------------------------------------------------
-    if not path_lower.startswith(ARTICLE_ROOT + "/"):
+    if not path.startswith(ARTICLE_ROOT + "/"):
         return False
 
     relative_path = path[len(ARTICLE_ROOT):].strip("/")
@@ -284,118 +148,92 @@ def is_probable_article_url(url: str) -> bool:
         return False
 
     # ------------------------------------------------------------------
-    # 3. Reject pagination.
+    # استبعاد صفحات الترقيم فقط:
+    # /page/2
+    # /page/3
     # ------------------------------------------------------------------
-    if re.fullmatch(r"page/\d+", relative_path, re.IGNORECASE):
+    if re.fullmatch(r"page/\d+", relative_path):
         return False
 
     # ------------------------------------------------------------------
-    # 4. Reject obvious blocked path structures.
+    # استبعاد المسارات المؤكدة غير المقالية فقط.
+    # لا نستبعد كلمات عامة مثل الأهلي أو الدوري أو الهلال،
+    # لأنها قد تكون جزءًا من عنوان خبر حقيقي.
     # ------------------------------------------------------------------
-    for prefix in BLOCKED_PATH_PREFIXES:
-        if path_lower.startswith(prefix):
-            return False
+    clearly_non_article_patterns = (
+        r"^category(?:/|$)",
+        r"^tag(?:/|$)",
+        r"^content-tag(?:/|$)",
+        r"^author(?:/|$)",
+        r"^search(?:/|$)",
+        r"^page/\d+$",
+    )
 
-    # ------------------------------------------------------------------
-    # 5. Reject multi-level category / taxonomy pages.
-    #
-    # Normal article URLs are generally a single slug after /magazine/.
-    # ------------------------------------------------------------------
-    segments = [
-        segment.strip()
-        for segment in relative_path.split("/")
-        if segment.strip()
-    ]
-
-    if len(segments) != 1:
+    if any(
+        re.search(pattern, relative_path)
+        for pattern in clearly_non_article_patterns
+    ):
         return False
 
-    slug = _clean_slug(segments[0])
+    # نأخذ أول slug للفحص المحافظ.
+    slug = relative_path.split("/")[0].strip()
 
     if not slug:
         return False
 
     # ------------------------------------------------------------------
-    # 6. Reject malformed / truncated slugs.
+    # روابط القنوات الناقلة اليومية.
+    # نستبعد النمط المؤكد فقط.
     # ------------------------------------------------------------------
-    if slug.endswith("-"):
+    if re.match(
+        r"^القنوات-الناقلة-لمباريات-اليوم(?:-|$)",
+        slug,
+    ):
         return False
 
-    if slug in {"-", "--", "..."}:
-        return False
-
-    if re.fullmatch(r"\d+", slug):
-        return False
-
-    # Unusual URL encoding left behind after decoding.
-    if "%" in slug:
-        return False
-
-    # ------------------------------------------------------------------
-    # 7. Exact section pages.
-    # ------------------------------------------------------------------
-    if slug in {_clean_slug(x) for x in BLOCKED_SECTION_SLUGS}:
-        return False
-
-    if slug in {_clean_slug(x) for x in COMMON_TEAM_SECTION_SLUGS}:
+    if re.match(
+        r"^القنوات-الناقلة-لمباراة-اليوم(?:-|$)",
+        slug,
+    ):
         return False
 
     # ------------------------------------------------------------------
-    # 8. Club / national-team / league style section slugs.
+    # صفحات الإحصائيات الواضحة الخاصة بكأس العالم.
+    # ------------------------------------------------------------------
+    if re.match(
+        r"^(?:إحصائيات|احصائيات)-كأس-العالم(?:-|$)",
+        slug,
+    ):
+        return False
+
+    # ------------------------------------------------------------------
+    # صفحات تجميعية مؤكدة وغير مقالية.
+    # ------------------------------------------------------------------
+    exact_non_articles = {
+        "الأهداف-العكسية-كأس-العالم",
+        "بطاقة-حمراء-مجموعات",
+    }
+
+    if slug in exact_non_articles:
+        return False
+
+    # ------------------------------------------------------------------
+    # لا نقوم هنا باستبعاد:
     #
-    # Prefix matching is restricted to the beginning of the WHOLE slug.
-    # We do NOT search the complete URL with "in" because an article title
-    # can legitimately contain these words.
+    # الأهلي
+    # الهلال
+    # النصر
+    # القادسية
+    # صلاح
+    # أستون فيلا
+    # الدوري
+    # كأس
+    # منتخب
+    #
+    # لأن هذه الكلمات قد تكون جزءًا من عنوان خبر حقيقي.
     # ------------------------------------------------------------------
-    for prefix in BLOCKED_SLUG_PREFIXES:
-        normalized_prefix = _clean_slug(prefix)
-        if slug.startswith(normalized_prefix):
-            # Keep genuine longer article headlines such as:
-            # "الدوري-السعودي-يترقب-صفقة-..."
-            #
-            # Short section-like URLs are rejected.
-            remainder = slug[len(normalized_prefix):].strip("-")
 
-            if not remainder:
-                return False
-
-            # Examples of direct taxonomy/section URLs:
-            # /نادي-الزمالك/
-            # /منتخب-السعودية/
-            # /الدوري-السعودي/
-            #
-            # A longer multi-part slug is treated as an article.
-            if remainder.count("-") <= 1:
-                return False
-
-    # ------------------------------------------------------------------
-    # 9. Daily "where to watch" / channels pages.
-    # ------------------------------------------------------------------
-    if BROADCAST_ARTICLE_RE.match(slug):
-        return False
-
-    # ------------------------------------------------------------------
-    # 10. Statistics pages.
-    # ------------------------------------------------------------------
-    if STATISTICS_RE.match(slug):
-        return False
-
-    if WORLD_CUP_STATS_RE.search(slug):
-        return False
-
-    # ------------------------------------------------------------------
-    # 11. Known special non-news pages.
-    # ------------------------------------------------------------------
-    if any(_clean_slug(pattern) in slug for pattern in SPECIAL_NON_ARTICLE_PATTERNS):
-        return False
-
-    # ------------------------------------------------------------------
-    # 12. Very short/truncated slugs.
-    # ------------------------------------------------------------------
-    # Allow normal short titles, but reject obvious fragments.
-    if len(slug.replace("-", "")) < 5:
-        return False
-
+    # إذا لم يكن الرابط مؤكدًا أنه غير مقالي، نسمح له بالمرور.
     return True
 
 
@@ -472,6 +310,7 @@ def parse_absolute_time(text: str) -> datetime | None:
                 minute,
                 tzinfo=timezone(timedelta(hours=3)),
             ).astimezone(timezone.utc)
+
         except ValueError:
             return None
 
@@ -484,7 +323,12 @@ def parse_absolute_time(text: str) -> datetime | None:
                 match.group(1).replace("Z", "+00:00")
             )
 
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return (
+                dt
+                if dt.tzinfo
+                else dt.replace(tzinfo=timezone.utc)
+            )
+
         except ValueError:
             pass
 
@@ -492,18 +336,20 @@ def parse_absolute_time(text: str) -> datetime | None:
 
 
 def parse_any_time(text: str, now: datetime) -> datetime | None:
-    return parse_absolute_time(text) or parse_relative_time(text, now)
+    return (
+        parse_absolute_time(text)
+        or parse_relative_time(text, now)
+    )
 
 
 # ============================================================================
-# JSON-LD
+# JSON-LD Extraction
 # ============================================================================
 
 def extract_json_ld(soup: BeautifulSoup) -> list[dict]:
     """
-    Extract all JSON-LD objects, including objects nested inside @graph.
+    Extract JSON-LD objects and nested @graph objects.
     """
-
     items: list[dict] = []
 
     def collect(data) -> None:
@@ -511,6 +357,7 @@ def extract_json_ld(soup: BeautifulSoup) -> list[dict]:
             items.append(data)
 
             graph = data.get("@graph")
+
             if isinstance(graph, list):
                 for entry in graph:
                     collect(entry)
@@ -519,17 +366,18 @@ def extract_json_ld(soup: BeautifulSoup) -> list[dict]:
             for entry in data:
                 collect(entry)
 
-    for script in soup.select('script[type="application/ld+json"]'):
+    for script in soup.select(
+        'script[type="application/ld+json"]'
+    ):
         raw = script.string or script.get_text()
 
         if not raw:
             continue
 
-        raw = raw.strip()
-
         try:
-            data = json.loads(raw)
+            data = json.loads(raw.strip())
             collect(data)
+
         except Exception:
             continue
 
@@ -539,8 +387,14 @@ def extract_json_ld(soup: BeautifulSoup) -> list[dict]:
 def first_meta(soup: BeautifulSoup, *names: str) -> str:
     for name in names:
         tag = (
-            soup.find("meta", attrs={"property": name})
-            or soup.find("meta", attrs={"name": name})
+            soup.find(
+                "meta",
+                attrs={"property": name},
+            )
+            or soup.find(
+                "meta",
+                attrs={"name": name},
+            )
         )
 
         if tag:
@@ -557,40 +411,85 @@ def first_meta(soup: BeautifulSoup, *names: str) -> str:
 
 
 # ============================================================================
-# Image Extraction Helpers
+# Featured Image Helpers
 # ============================================================================
 
 def _clean_image_candidate(value: str | None) -> str:
+    """Clean and normalize a possible image URL."""
     if not value:
         return ""
 
     value = html.unescape(str(value)).strip()
 
-    if value.startswith(("data:", "blob:", "javascript:")):
+    if not value:
         return ""
 
-    # CSS-style url(...)
-    css_match = re.fullmatch(
+    if value.startswith(
+        (
+            "data:",
+            "blob:",
+            "javascript:",
+        )
+    ):
+        return ""
+
+    # دعم CSS: url(...)
+    match = re.fullmatch(
         r"url\(\s*['\"]?(.*?)['\"]?\s*\)",
         value,
         re.IGNORECASE,
     )
 
-    if css_match:
-        value = css_match.group(1).strip()
+    if match:
+        value = match.group(1).strip()
 
-    # Remove surrounding quotes.
-    value = value.strip(" '\"")
+    return value.strip(" '\"")
 
-    return value
+
+def _is_valid_article_image(url_str: str) -> bool:
+    """
+    Check if the URL looks like a genuine article image.
+
+    IMPORTANT:
+    Do not reject URLs merely because they contain "365scores".
+    """
+
+    value = _clean_image_candidate(url_str)
+
+    if not value:
+        return False
+
+    lower_url = value.lower()
+
+    if lower_url.startswith(
+        (
+            "data:",
+            "blob:",
+            "javascript:",
+        )
+    ):
+        return False
+
+    parsed = urlparse(value)
+    path = parsed.path.lower()
+
+    # غالبًا SVG تكون أيقونات أو شعارات.
+    if path.endswith(".svg"):
+        return False
+
+    # استبعاد الصور الواضح أنها شعار أو placeholder.
+    if any(
+        pattern in lower_url
+        for pattern in DEFAULT_LOGO_PATTERNS
+    ):
+        return False
+
+    return True
 
 
 def _pick_from_srcset(srcset: str | None) -> str:
     """
-    Pick the largest candidate from a srcset.
-    Supports:
-      image.jpg 640w, image.jpg 1280w
-      image.webp 1x, image.webp 2x
+    Pick the largest/best candidate from srcset.
     """
 
     if not srcset:
@@ -598,13 +497,13 @@ def _pick_from_srcset(srcset: str | None) -> str:
 
     candidates = []
 
-    for raw_candidate in srcset.split(","):
-        candidate = raw_candidate.strip()
+    for raw_item in srcset.split(","):
+        item = raw_item.strip()
 
-        if not candidate:
+        if not item:
             continue
 
-        parts = candidate.split()
+        parts = item.split()
 
         if not parts:
             continue
@@ -619,7 +518,11 @@ def _pick_from_srcset(srcset: str | None) -> str:
         if len(parts) > 1:
             descriptor = parts[1].lower()
 
-            width_match = re.fullmatch(r"(\d+(?:\.\d+)?)w", descriptor)
+            width_match = re.fullmatch(
+                r"(\d+(?:\.\d+)?)w",
+                descriptor,
+            )
+
             density_match = re.fullmatch(
                 r"(\d+(?:\.\d+)?)x",
                 descriptor,
@@ -627,6 +530,7 @@ def _pick_from_srcset(srcset: str | None) -> str:
 
             if width_match:
                 score = float(width_match.group(1))
+
             elif density_match:
                 score = float(density_match.group(1)) * 1000
 
@@ -635,66 +539,17 @@ def _pick_from_srcset(srcset: str | None) -> str:
     if not candidates:
         return ""
 
-    candidates.sort(key=lambda item: item[0], reverse=True)
+    candidates.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
 
     return candidates[0][1]
 
 
-def _is_valid_article_image(url_str: str) -> bool:
+def _extract_image_urls_from_json(value) -> list[str]:
     """
-    Validate an image candidate without rejecting valid 365Scores CDN URLs.
-    """
-
-    value = _clean_image_candidate(url_str)
-
-    if not value:
-        return False
-
-    lower_url = value.lower()
-
-    # Never reject merely because "365scores" exists in the URL.
-    if lower_url.startswith(("data:", "blob:", "javascript:")):
-        return False
-
-    parsed = urlparse(value)
-    path = parsed.path.lower()
-
-    # SVGs are generally icons/logos, not featured article photos.
-    if path.endswith(".svg"):
-        return False
-
-    # Obvious logo/avatar/placeholder patterns.
-    if any(pattern in lower_url for pattern in DEFAULT_LOGO_PATTERNS):
-        return False
-
-    # Tiny tracking / spacer GIFs.
-    if path.endswith(
-        (
-            ".gif",
-            ".ico",
-        )
-    ):
-        if any(
-            marker in lower_url
-            for marker in (
-                "pixel",
-                "tracking",
-                "spacer",
-                "transparent",
-            )
-        ):
-            return False
-
-    # Need at least a plausible URL-like value.
-    if not parsed.scheme and not value.startswith(("/", "./", "../")):
-        return False
-
-    return True
-
-
-def _extract_image_from_json_value(value) -> list[str]:
-    """
-    Recursively collect image URLs from JSON-LD values.
+    Recursively extract image URLs from JSON-LD structures.
     """
 
     results: list[str] = []
@@ -705,7 +560,9 @@ def _extract_image_from_json_value(value) -> list[str]:
 
     elif isinstance(value, list):
         for item in value:
-            results.extend(_extract_image_from_json_value(item))
+            results.extend(
+                _extract_image_urls_from_json(item)
+            )
 
     elif isinstance(value, dict):
         for key in (
@@ -717,33 +574,45 @@ def _extract_image_from_json_value(value) -> list[str]:
         ):
             candidate = value.get(key)
 
-            if isinstance(candidate, str):
-                if _is_valid_article_image(candidate):
-                    results.append(candidate.strip())
+            if (
+                isinstance(candidate, str)
+                and _is_valid_article_image(candidate)
+            ):
+                results.append(candidate.strip())
 
-        # Handle nested image objects.
         for key in (
             "image",
-            "content",
+            "primaryImageOfPage",
             "thumbnail",
-            "logo",
         ):
-            nested = value.get(key)
-
-            if key != "logo":
-                results.extend(_extract_image_from_json_value(nested))
+            if key in value:
+                results.extend(
+                    _extract_image_urls_from_json(
+                        value[key]
+                    )
+                )
 
     return results
 
 
-def _extract_dom_image_candidates(container) -> list[str]:
+def _extract_dom_image_candidates(
+    container,
+) -> list[str]:
     """
-    Collect image URLs from img/source/picture/noscript/background images.
+    Extract all possible image URLs from a DOM container.
+    Supports:
+    - picture
+    - source
+    - img
+    - lazy loading
+    - srcset
+    - noscript
+    - CSS background-image
     """
 
     candidates: list[str] = []
 
-    image_attributes = (
+    direct_attributes = (
         "src",
         "data-src",
         "data-lazy-src",
@@ -763,12 +632,10 @@ def _extract_dom_image_candidates(container) -> list[str]:
         "data-srcset",
         "data-lazy-srcset",
         "data-original-srcset",
-        "data-src-webp",
-        "data-src-webp",
     )
 
     # ------------------------------------------------------------------
-    # img + source
+    # img / source / picture
     # ------------------------------------------------------------------
     for element in container.select(
         "picture img, picture source, img, source"
@@ -779,56 +646,79 @@ def _extract_dom_image_candidates(container) -> list[str]:
             if value:
                 candidate = _pick_from_srcset(value)
 
-                if candidate and _is_valid_article_image(candidate):
+                if (
+                    candidate
+                    and _is_valid_article_image(candidate)
+                ):
                     candidates.append(candidate)
 
-        for attr in image_attributes:
+        for attr in direct_attributes:
             value = element.get(attr)
 
             if value:
                 candidate = _clean_image_candidate(value)
 
-                if candidate and _is_valid_article_image(candidate):
+                if (
+                    candidate
+                    and _is_valid_article_image(candidate)
+                ):
                     candidates.append(candidate)
 
     # ------------------------------------------------------------------
-    # Lazy-loaded images represented in noscript.
+    # noscript
     # ------------------------------------------------------------------
     for noscript in container.find_all("noscript"):
-        raw = noscript.get_text(" ", strip=True)
+        raw = noscript.get_text(
+            " ",
+            strip=True,
+        )
 
         if not raw:
             continue
 
         try:
-            nested = BeautifulSoup(raw, "html.parser")
+            nested_soup = BeautifulSoup(
+                raw,
+                "html.parser",
+            )
 
-            for element in nested.select("img, source"):
+            for element in nested_soup.select(
+                "img, source"
+            ):
                 for attr in srcset_attributes:
                     value = element.get(attr)
 
                     if value:
                         candidate = _pick_from_srcset(value)
 
-                        if candidate and _is_valid_article_image(candidate):
+                        if (
+                            candidate
+                            and _is_valid_article_image(candidate)
+                        ):
                             candidates.append(candidate)
 
-                for attr in image_attributes:
+                for attr in direct_attributes:
                     value = element.get(attr)
 
                     if value:
                         candidate = _clean_image_candidate(value)
 
-                        if candidate and _is_valid_article_image(candidate):
+                        if (
+                            candidate
+                            and _is_valid_article_image(candidate)
+                        ):
                             candidates.append(candidate)
 
         except Exception:
             continue
 
     # ------------------------------------------------------------------
-    # CSS background-image
+    # background-image
     # ------------------------------------------------------------------
-    for tag in container.find_all(True, style=True):
+    for tag in container.find_all(
+        True,
+        style=True,
+    ):
         style = tag.get("style", "")
 
         if "background-image" not in style.lower():
@@ -843,7 +733,10 @@ def _extract_dom_image_candidates(container) -> list[str]:
         for _, value in matches:
             candidate = _clean_image_candidate(value)
 
-            if candidate and _is_valid_article_image(candidate):
+            if (
+                candidate
+                and _is_valid_article_image(candidate)
+            ):
                 candidates.append(candidate)
 
     return candidates
@@ -851,43 +744,41 @@ def _extract_dom_image_candidates(container) -> list[str]:
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
     """
-    Robust featured-image extraction.
+    Extract featured article image using BeautifulSoup.
 
-    Priority:
-      1. JSON-LD / Schema.org
-      2. OpenGraph / Twitter meta
-      3. article/main DOM
-      4. picture/source
-      5. lazy-loading attributes
-      6. noscript
-      7. background-image
+    Search order:
+    1. JSON-LD
+    2. OpenGraph / Twitter meta
+    3. link rel=image_src
+    4. article containers
+    5. picture / source / img
+    6. Lazy Loading attributes
+    7. noscript
+    8. CSS background-image
     """
 
     # ------------------------------------------------------------------
     # 1. JSON-LD
     # ------------------------------------------------------------------
     for item in extract_json_ld(soup):
-        # Standard "image"
-        for candidate in _extract_image_from_json_value(item.get("image")):
-            if _is_valid_article_image(candidate):
-                return candidate
-
-        # Schema.org primaryImageOfPage
-        for candidate in _extract_image_from_json_value(
-            item.get("primaryImageOfPage")
+        for key in (
+            "image",
+            "primaryImageOfPage",
+            "thumbnailUrl",
         ):
-            if _is_valid_article_image(candidate):
-                return candidate
+            if key not in item:
+                continue
 
-        # Thumbnail
-        for candidate in _extract_image_from_json_value(
-            item.get("thumbnailUrl")
-        ):
-            if _is_valid_article_image(candidate):
-                return candidate
+            candidates = _extract_image_urls_from_json(
+                item.get(key)
+            )
+
+            for candidate in candidates:
+                if _is_valid_article_image(candidate):
+                    return candidate.strip()
 
     # ------------------------------------------------------------------
-    # 2. Meta tags
+    # 2. OpenGraph / Twitter
     # ------------------------------------------------------------------
     meta_image = first_meta(
         soup,
@@ -898,25 +789,40 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
         "twitter:image:src",
     )
 
-    if meta_image and _is_valid_article_image(meta_image):
-        return meta_image
+    if (
+        meta_image
+        and _is_valid_article_image(meta_image)
+    ):
+        return meta_image.strip()
 
     # ------------------------------------------------------------------
     # 3. <link rel="image_src">
     # ------------------------------------------------------------------
-    link_image = soup.find(
-        "link",
-        attrs={"rel": lambda value: value and "image_src" in value},
-    )
+    for link_tag in soup.find_all("link"):
+        rel = link_tag.get("rel")
 
-    if link_image:
-        href = link_image.get("href", "")
+        if not rel:
+            continue
 
-        if href and _is_valid_article_image(href):
+        rel_text = (
+            " ".join(rel)
+            if isinstance(rel, list)
+            else str(rel)
+        ).lower()
+
+        if "image_src" not in rel_text:
+            continue
+
+        href = link_tag.get("href", "")
+
+        if (
+            href
+            and _is_valid_article_image(href)
+        ):
             return href.strip()
 
     # ------------------------------------------------------------------
-    # 4. Locate article containers.
+    # 4. Article containers
     # ------------------------------------------------------------------
     selectors = (
         "article",
@@ -931,250 +837,346 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
         "[class*='Content']",
     )
 
-    containers = []
+    seen = set()
 
     for selector in selectors:
         for container in soup.select(selector):
-            containers.append(container)
+            container_id = id(container)
 
-    # Remove duplicates while preserving order.
-    unique_containers = []
-    seen_ids = set()
+            if container_id in seen:
+                continue
 
-    for container in containers:
-        object_id = id(container)
+            seen.add(container_id)
 
-        if object_id not in seen_ids:
-            seen_ids.add(object_id)
-            unique_containers.append(container)
+            candidates = _extract_dom_image_candidates(
+                container
+            )
 
-    # ------------------------------------------------------------------
-    # 5. DOM extraction.
-    # ------------------------------------------------------------------
-    for container in unique_containers:
-        candidates = _extract_dom_image_candidates(container)
-
-        for candidate in candidates:
-            if _is_valid_article_image(candidate):
-                return candidate.strip()
+            for candidate in candidates:
+                if _is_valid_article_image(candidate):
+                    return candidate.strip()
 
     return ""
 
 
 # ============================================================================
-# Playwright Image Fallback
+# Playwright Featured Image Fallback
 # ============================================================================
 
-async def extract_featured_image_with_playwright(page: Page) -> str:
+async def extract_featured_image_with_playwright(
+    page: Page,
+) -> str:
     """
-    Fast browser-side fallback.
+    Final fallback when BeautifulSoup cannot find the article image.
 
-    It checks the first usable image inside the article/main area and reads:
-      - currentSrc
-      - src
-      - data-src
-      - data-lazy-src
-      - data-original
-      - srcset
-      - data-srcset
-      - picture/source
-      - background-image
+    The browser:
+    1. Scrolls article containers into view.
+    2. Waits for lazy loading.
+    3. Checks currentSrc.
+    4. Checks all lazy-loading attributes.
+    5. Checks srcset.
+    6. Checks picture/source/img.
+    7. Rejects tiny images and obvious icons/logos.
     """
 
     try:
-        value = await page.evaluate(
+        # محاولة تحفيز Lazy Loading.
+        await page.evaluate(
+            """async () => {
+                const containers = document.querySelectorAll(
+                    [
+                        'article',
+                        'main',
+                        '[class*="article"]',
+                        '[class*="Article"]',
+                        '[class*="news"]',
+                        '[class*="News"]',
+                        '[class*="content"]',
+                        '[class*="Content"]'
+                    ].join(',')
+                );
+
+                containers.forEach(container => {
+                    try {
+                        container.scrollIntoView({
+                            block: 'center',
+                            behavior: 'instant'
+                        });
+                    } catch (_) {}
+                });
+
+                await new Promise(resolve =>
+                    setTimeout(resolve, 1500)
+                );
+            }"""
+        )
+
+        image_url = await page.evaluate(
             """() => {
-                const badPatterns =
-                    /logo|icon|avatar|favicon|placeholder|default-image|default_image/i;
+                const invalidPatterns = [
+                    'logo',
+                    'icon',
+                    'avatar',
+                    'favicon',
+                    'placeholder',
+                    'default-image',
+                    'default_image',
+                    'no-image',
+                    'no_image'
+                ];
 
                 const isValid = (value) => {
-                    if (!value || typeof value !== "string") return false;
+                    if (!value || typeof value !== 'string') {
+                        return false;
+                    }
 
                     const url = value.trim();
 
-                    if (!url) return false;
-                    if (/^(data:|blob:|javascript:)/i.test(url)) return false;
-                    if (/\\.svg(?:$|\\?)/i.test(url)) return false;
-                    if (badPatterns.test(url)) return false;
+                    if (!url) {
+                        return false;
+                    }
+
+                    if (
+                        /^(data:|blob:|javascript:)/i.test(url)
+                    ) {
+                        return false;
+                    }
+
+                    const lower = url.toLowerCase();
+
+                    if (/\\.svg(?:$|\\?)/i.test(lower)) {
+                        return false;
+                    }
+
+                    if (
+                        invalidPatterns.some(pattern =>
+                            lower.includes(pattern)
+                        )
+                    ) {
+                        return false;
+                    }
 
                     return true;
                 };
 
-                const attrs = [
-                    "src",
-                    "data-src",
-                    "data-lazy-src",
-                    "data-original",
-                    "data-image",
-                    "data-image-src",
-                    "data-img-src",
-                    "data-url",
-                    "data-fallback-src",
-                    "data-src-webp",
-                    "data-webp",
-                    "data-original-src"
-                ];
+                const getBestSrcset = (srcset) => {
+                    if (!srcset) {
+                        return '';
+                    }
 
-                const srcsetAttrs = [
-                    "srcset",
-                    "data-srcset",
-                    "data-lazy-srcset",
-                    "data-original-srcset"
-                ];
-
-                const getSrcsetCandidate = (value) => {
-                    if (!value) return "";
-
-                    const items = value
-                        .split(",")
-                        .map(x => x.trim())
+                    const items = srcset
+                        .split(',')
+                        .map(item => item.trim())
                         .filter(Boolean);
 
-                    if (!items.length) return "";
-
-                    let best = "";
+                    let bestUrl = '';
                     let bestScore = -1;
 
                     for (const item of items) {
-                        const parts = item.split(/\\s+/);
+                        const parts =
+                            item.split(/\\s+/);
+
                         const url = parts[0];
 
-                        if (!isValid(url)) continue;
+                        if (!isValid(url)) {
+                            continue;
+                        }
 
                         let score = 0;
 
                         if (parts[1]) {
                             const descriptor = parts[1];
 
-                            const width = descriptor.match(/(\\d+(?:\\.\\d+)?)w/);
-                            const density = descriptor.match(/(\\d+(?:\\.\\d+)?)x/);
+                            const width =
+                                descriptor.match(
+                                    /(\\d+(?:\\.\\d+)?)w/
+                                );
+
+                            const density =
+                                descriptor.match(
+                                    /(\\d+(?:\\.\\d+)?)x/
+                                );
 
                             if (width) {
-                                score = Number(width[1]);
+                                score =
+                                    Number(width[1]);
                             } else if (density) {
-                                score = Number(density[1]) * 1000;
+                                score =
+                                    Number(density[1])
+                                    * 1000;
                             }
                         }
 
-                        if (score > bestScore) {
+                        if (score >= bestScore) {
                             bestScore = score;
-                            best = url;
+                            bestUrl = url;
                         }
                     }
 
-                    return best;
+                    return bestUrl;
                 };
 
                 const roots = [
                     ...document.querySelectorAll(
-                        "article, main, [data-testid*='article'], " +
-                        "[data-test*='article'], [class*='article'], " +
-                        "[class*='Article'], [class*='news'], [class*='News']"
+                        [
+                            'article',
+                            'main',
+                            '[data-testid*="article"]',
+                            '[data-test*="article"]',
+                            '[class*="article"]',
+                            '[class*="Article"]',
+                            '[class*="news"]',
+                            '[class*="News"]',
+                            '[class*="content"]',
+                            '[class*="Content"]'
+                        ].join(',')
                     )
                 ];
 
-                const seen = new Set();
+                const seenUrls = new Set();
 
                 for (const root of roots) {
-                    const elements = root.querySelectorAll(
-                        "picture source, picture img, img, [style*='background-image']"
-                    );
+                    const elements =
+                        root.querySelectorAll(
+                            'picture, picture source, picture img, img, source'
+                        );
 
                     for (const element of elements) {
                         const candidates = [];
 
-                        // Browser's resolved lazy-loaded image.
+                        // الصورة التي اختارها المتصفح فعليًا.
                         if (element.currentSrc) {
-                            candidates.push(element.currentSrc);
+                            candidates.push(
+                                element.currentSrc
+                            );
                         }
 
-                        // Normal attributes.
-                        for (const attr of attrs) {
-                            const value = element.getAttribute(attr);
-                            if (value) candidates.push(value);
-                        }
+                        // srcset
+                        const srcsetAttributes = [
+                            'srcset',
+                            'data-srcset',
+                            'data-lazy-srcset',
+                            'data-original-srcset'
+                        ];
 
-                        // srcset / lazy srcset.
-                        for (const attr of srcsetAttrs) {
-                            const value = element.getAttribute(attr);
+                        for (
+                            const attribute
+                            of srcsetAttributes
+                        ) {
+                            const value =
+                                element.getAttribute(
+                                    attribute
+                                );
 
                             if (value) {
-                                const selected = getSrcsetCandidate(value);
+                                const best =
+                                    getBestSrcset(value);
 
-                                if (selected) {
-                                    candidates.push(selected);
+                                if (best) {
+                                    candidates.push(best);
                                 }
                             }
                         }
 
-                        // CSS background-image.
-                        const style = element.getAttribute("style") || "";
+                        // جميع خصائص Lazy Loading المحتملة.
+                        const directAttributes = [
+                            'src',
+                            'data-src',
+                            'data-lazy-src',
+                            'data-original',
+                            'data-image',
+                            'data-image-src',
+                            'data-img-src',
+                            'data-url',
+                            'data-fallback-src',
+                            'data-src-webp',
+                            'data-webp',
+                            'data-original-src'
+                        ];
 
-                        if (/background-image/i.test(style)) {
-                            const match = style.match(
-                                /url\\(\\s*['"]?(.*?)['"]?\\s*\\)/i
-                            );
+                        for (
+                            const attribute
+                            of directAttributes
+                        ) {
+                            const value =
+                                element.getAttribute(
+                                    attribute
+                                );
 
-                            if (match && match[1]) {
-                                candidates.push(match[1]);
+                            if (value) {
+                                candidates.push(value);
                             }
                         }
 
-                        for (const candidate of candidates) {
-                            if (!candidate) continue;
+                        for (
+                            const candidate
+                            of candidates
+                        ) {
+                            if (!isValid(candidate)) {
+                                continue;
+                            }
 
-                            const clean = String(candidate).trim();
+                            const url =
+                                String(candidate).trim();
 
-                            if (!isValid(clean)) continue;
+                            if (seenUrls.has(url)) {
+                                continue;
+                            }
 
-                            if (seen.has(clean)) continue;
-                            seen.add(clean);
+                            seenUrls.add(url);
 
-                            // Avoid tiny images/icons when dimensions are known.
-                            if (element.tagName === "IMG") {
+                            // نستبعد الصور الصغيرة فقط
+                            // عندما تكون أبعادها معروفة.
+                            if (
+                                element.tagName === 'IMG'
+                            ) {
                                 const width =
-                                    element.naturalWidth ||
-                                    element.width ||
-                                    0;
+                                    element.naturalWidth
+                                    || 0;
 
                                 const height =
-                                    element.naturalHeight ||
-                                    element.height ||
-                                    0;
+                                    element.naturalHeight
+                                    || 0;
 
                                 if (
-                                    (width > 0 && width < 180) ||
-                                    (height > 0 && height < 120)
+                                    width > 0 &&
+                                    height > 0 &&
+                                    (
+                                        width < 180 ||
+                                        height < 120
+                                    )
                                 ) {
                                     continue;
                                 }
                             }
 
-                            return clean;
+                            return url;
                         }
                     }
                 }
 
-                return "";
+                return '';
             }"""
         )
 
-        value = _clean_image_candidate(value)
-
-        if _is_valid_article_image(value):
-            return value
+        return (
+            image_url.strip()
+            if image_url
+            else ""
+        )
 
     except Exception:
-        pass
-
-    return ""
+        return ""
 
 
 # ============================================================================
 # Published Time
 # ============================================================================
 
-def extract_published_at(soup: BeautifulSoup) -> datetime | None:
+def extract_published_at(
+    soup: BeautifulSoup,
+) -> datetime | None:
+
     now = datetime.now(timezone.utc)
 
     for key in (
@@ -1192,41 +1194,65 @@ def extract_published_at(soup: BeautifulSoup) -> datetime | None:
                 return (
                     dt
                     if dt.tzinfo
-                    else dt.replace(tzinfo=timezone.utc)
+                    else dt.replace(
+                        tzinfo=timezone.utc
+                    )
                 )
 
             except ValueError:
-                if parsed := parse_any_time(val, now):
+                if parsed := parse_any_time(
+                    val,
+                    now,
+                ):
                     return parsed
 
     for item in extract_json_ld(soup):
-        for key in ("datePublished", "dateCreated"):
+        for key in (
+            "datePublished",
+            "dateCreated",
+        ):
             if val := item.get(key):
                 if isinstance(val, str):
                     try:
                         dt = datetime.fromisoformat(
-                            val.replace("Z", "+00:00")
+                            val.replace(
+                                "Z",
+                                "+00:00",
+                            )
                         )
 
                         return (
                             dt
                             if dt.tzinfo
-                            else dt.replace(tzinfo=timezone.utc)
+                            else dt.replace(
+                                tzinfo=timezone.utc
+                            )
                         )
 
                     except ValueError:
-                        if parsed := parse_any_time(val, now):
+                        if parsed := parse_any_time(
+                            val,
+                            now,
+                        ):
                             return parsed
 
-    for time_tag in soup.select("time[datetime]"):
+    for time_tag in soup.select(
+        "time[datetime]"
+    ):
         if parsed := parse_any_time(
-            time_tag.get("datetime", "").strip(),
+            time_tag.get(
+                "datetime",
+                "",
+            ).strip(),
             now,
         ):
             return parsed
 
     return parse_any_time(
-        soup.get_text(" ", strip=True),
+        soup.get_text(
+            " ",
+            strip=True,
+        ),
         now,
     )
 
@@ -1235,11 +1261,20 @@ def extract_published_at(soup: BeautifulSoup) -> datetime | None:
 # Article Text
 # ============================================================================
 
-def extract_article_text(soup: BeautifulSoup) -> str:
-    for item in extract_json_ld(soup):
-        body = item.get("articleBody") or item.get("description")
+def extract_article_text(
+    soup: BeautifulSoup,
+) -> str:
 
-        if isinstance(body, str) and len(body.strip()) > 80:
+    for item in extract_json_ld(soup):
+        body = (
+            item.get("articleBody")
+            or item.get("description")
+        )
+
+        if (
+            isinstance(body, str)
+            and len(body.strip()) > 80
+        ):
             return body.strip()
 
     paragraphs = []
@@ -1252,7 +1287,10 @@ def extract_article_text(soup: BeautifulSoup) -> str:
         "[class*='text'] p, "
         "p"
     ):
-        text = p.get_text(" ", strip=True)
+        text = p.get_text(
+            " ",
+            strip=True,
+        )
 
         if text and len(text) > 15:
             paragraphs.append(text)
@@ -1278,12 +1316,18 @@ def extract_article_text(soup: BeautifulSoup) -> str:
 
     for selector in selectors:
         if node := soup.select_one(selector):
-            if text := node.get_text("\n", strip=True):
+            if text := node.get_text(
+                "\n",
+                strip=True,
+            ):
                 candidates.append(text)
 
     if not candidates:
         candidates.append(
-            soup.get_text("\n", strip=True)
+            soup.get_text(
+                "\n",
+                strip=True,
+            )
         )
 
     text = max(
@@ -1293,7 +1337,11 @@ def extract_article_text(soup: BeautifulSoup) -> str:
     )
 
     lines = [
-        re.sub(r"\s+", " ", line).strip()
+        re.sub(
+            r"\s+",
+            " ",
+            line,
+        ).strip()
         for line in text.splitlines()
         if line.strip()
     ]
@@ -1311,6 +1359,7 @@ async def collect_article_cards(
 ) -> list[ArticleSummary]:
 
     now = datetime.now(timezone.utc)
+
     results: dict[str, ArticleSummary] = {}
 
     async def collect_current_dom() -> None:
@@ -1330,7 +1379,7 @@ async def collect_article_cards(
                 str(item.get("href", "")),
             )
 
-            # Strict filtering occurs BEFORE adding candidate.
+            # فلترة محافظة جدًا قبل مرحلة الجلب.
             if not is_probable_article_url(url):
                 continue
 
@@ -1343,7 +1392,10 @@ async def collect_article_cards(
                 ),
             ).strip()
 
-            if not title_text or len(title_text) < 12:
+            if (
+                not title_text
+                or len(title_text) < 12
+            ):
                 continue
 
             parsed_time = parse_any_time(
@@ -1376,7 +1428,8 @@ async def collect_article_cards(
 
             if (
                 current is None
-                or len(candidate.title) > len(current.title)
+                or len(candidate.title)
+                > len(current.title)
             ):
                 results[url] = candidate
 
@@ -1384,7 +1437,10 @@ async def collect_article_cards(
 
     for _ in range(10):
         try:
-            await page.mouse.wheel(0, 5000)
+            await page.mouse.wheel(
+                0,
+                5000,
+            )
 
             await page.wait_for_timeout(900)
 
@@ -1407,7 +1463,8 @@ async def fetch_article(
         timeout=45_000,
     )
 
-    await page.wait_for_timeout(2_000)
+    # انتظار أولي لتحميل الصفحة.
+    await page.wait_for_timeout(1_500)
 
     html_content = await page.content()
 
@@ -1432,22 +1489,26 @@ async def fetch_article(
         )
     )
 
-    # ---------------------------------------------------------------
-    # Primary image extraction: BeautifulSoup.
-    # ---------------------------------------------------------------
+    # ==================================================================
+    # المرحلة الأولى:
+    # استخراج الصورة من HTML / JSON-LD / Meta / Lazy attributes.
+    # ==================================================================
     image_url = extract_featured_image(soup)
 
-    # ---------------------------------------------------------------
-    # Fallback: browser-side extraction.
+    # ==================================================================
+    # المرحلة الثانية:
+    # إذا لم يجد BeautifulSoup الصورة، نستخدم المتصفح نفسه.
     #
-    # This is intentionally executed BEFORE the article is considered
-    # to have no image, so lazy-loaded images have one more opportunity.
-    # ---------------------------------------------------------------
+    # هذا يسمح لـ Lazy Loading بالعمل وقراءة currentSrc.
+    # ==================================================================
     if not image_url:
         image_url = await extract_featured_image_with_playwright(
             page
         )
 
+    # ==================================================================
+    # توحيد الرابط بعد استخراج الصورة.
+    # ==================================================================
     image_url = normalize_url(
         summary.url,
         image_url,
@@ -1486,7 +1547,10 @@ async def create_browser_context(playwright):
 async def discover_articles(
     source_url: str,
     max_articles: int,
-) -> tuple[list[ArticleSummary], list[str]]:
+) -> tuple[
+    list[ArticleSummary],
+    list[str],
+]:
 
     candidates = []
     errors = []
@@ -1507,7 +1571,6 @@ async def discover_articles(
 
             await page.wait_for_timeout(2_000)
 
-            # Handle common consent / close buttons.
             for selector in (
                 "button:has-text('موافق')",
                 "button:has-text('السماح')",
@@ -1546,8 +1609,10 @@ async def discover_articles(
 
             if not summaries:
                 errors.append(
-                    f"No article candidates discovered from {index_url}"
+                    f"No article candidates discovered "
+                    f"from {index_url}"
                 )
+
             else:
                 print(
                     f"DISCOVERY | "
@@ -1599,6 +1664,9 @@ async def fetch_source_articles(
                         candidate,
                     )
 
+                    # لا نستبعد هنا مباشرة.
+                    # مرحلة أخرى في المشروع يمكنها اتخاذ قرار
+                    # الاستبعاد النهائي إذا بقيت الصورة فارغة.
                     articles.append(article)
 
                 except Exception as exc:

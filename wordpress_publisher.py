@@ -91,9 +91,17 @@ class WordPressPublisher:
         return items[0] if items else None
 
     def upload_media(self, image_url: str, title: str) -> int:
+        # إرسال ترويسات متصفح كاملة مع جعل Referer ينتمي للمصدر لتفادي الحظر 403
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Accept-Language": "ar-SA,ar;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.365scores.com/",
+        }
+        
         response = requests.get(
             image_url,
-            headers={"User-Agent": self.settings.user_agent, "Referer": self.settings.wp_base_url},
+            headers=headers,
             timeout=self.settings.request_timeout_seconds,
         )
         if not response.ok or not response.content:

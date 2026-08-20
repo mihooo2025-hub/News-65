@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 from google import genai
 
@@ -104,23 +105,35 @@ class GeminiRewriter:
         last_exception = None
 
         for model_name in models:
-            try:
-                logger.info("Attempting rewriting with model: %s", model_name)
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config={
-                        "temperature": 0.2,
-                        "max_output_tokens": 1800,
-                        "response_mime_type": "application/json",
-                        "response_json_schema": SCHEMA,
-                    },
-                )
-                if response and response.text:
-                    break
-            except Exception as exc:
-                logger.warning("Model %s failed: %s", model_name, exc)
-                last_exception = exc
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    logger.info("Attempting rewriting with model: %s (attempt %d/%d)", model_name, attempt + 1, max_retries)
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config={
+                            "temperature": 0.2,
+                            "max_output_tokens": 1800,
+                            "response_mime_type": "application/json",
+                            "response_json_schema": SCHEMA,
+                        },
+                    )
+                    if response and response.text:
+                        break
+                except Exception as exc:
+                    err_msg = str(exc)
+                    last_exception = exc
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        wait_time = 22 + (attempt * 5)
+                        logger.warning("Rate limit hit (429) on model %s. Retrying in %d seconds... Error: %s", model_name, wait_time, exc)
+                        time.sleep(wait_time)
+                    else:
+                        logger.warning("Model %s failed with non-rate-limit error: %s", model_name, exc)
+                        break
+
+            if response and response.text:
+                break
 
         if not response or not response.text:
             if last_exception:

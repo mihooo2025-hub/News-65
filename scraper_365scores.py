@@ -37,8 +37,6 @@ USER_AGENT = (
     "Chrome/138.0.0.0 Safari/537.36"
 )
 
-# لا نضع "365scores" هنا، لأن صور المقالات الحقيقية قد تكون مستضافة
-# على نطاقات أو مسارات تابعة لـ 365Scores.
 DEFAULT_LOGO_PATTERNS = (
     "logo",
     "icon",
@@ -77,11 +75,6 @@ def news_index_url(source_url: str) -> str:
 
 
 def _decode_path(path: str) -> str:
-    """
-    Decode percent-encoded Arabic URLs safely.
-    Handles paths containing values such as:
-    %d9%83%d8%b1%d8%a9
-    """
     decoded = path or ""
 
     for _ in range(3):
@@ -99,11 +92,8 @@ def is_probable_article_url(url: str) -> bool:
     """
     Conservative article URL filter.
 
-    IMPORTANT:
-    The goal is NOT to aggressively reject possible articles.
-    A genuine article is preferred over accidentally losing news.
-
-    Only reject URLs that are clearly not individual news articles.
+    لا يتم استبعاد الروابط إلا إذا كانت واضحة أنها غير مقالية،
+    لتجنب فقدان أخبار حقيقية.
     """
 
     if not url:
@@ -119,14 +109,9 @@ def is_probable_article_url(url: str) -> bool:
 
     path = _decode_path(parsed.path).lower().rstrip("/")
 
-    # يجب أن يكون الرابط داخل قسم الأخبار العربية للمجلة.
     if not path.startswith(ARTICLE_ROOT):
         return False
 
-    # ------------------------------------------------------------------
-    # دعم المقالات التي تستخدم:
-    # /ar/news/magazine/?p=123456
-    # ------------------------------------------------------------------
     if path == ARTICLE_ROOT:
         query = parse_qs(parsed.query)
         post_ids = query.get("p", [])
@@ -136,9 +121,6 @@ def is_probable_article_url(url: str) -> bool:
             for post_id in post_ids
         )
 
-    # ------------------------------------------------------------------
-    # يجب أن يكون هناك شيء بعد /ar/news/magazine/
-    # ------------------------------------------------------------------
     if not path.startswith(ARTICLE_ROOT + "/"):
         return False
 
@@ -147,19 +129,9 @@ def is_probable_article_url(url: str) -> bool:
     if not relative_path:
         return False
 
-    # ------------------------------------------------------------------
-    # استبعاد صفحات الترقيم فقط:
-    # /page/2
-    # /page/3
-    # ------------------------------------------------------------------
     if re.fullmatch(r"page/\d+", relative_path):
         return False
 
-    # ------------------------------------------------------------------
-    # استبعاد المسارات المؤكدة غير المقالية فقط.
-    # لا نستبعد كلمات عامة مثل الأهلي أو الدوري أو الهلال،
-    # لأنها قد تكون جزءًا من عنوان خبر حقيقي.
-    # ------------------------------------------------------------------
     clearly_non_article_patterns = (
         r"^category(?:/|$)",
         r"^tag(?:/|$)",
@@ -175,16 +147,11 @@ def is_probable_article_url(url: str) -> bool:
     ):
         return False
 
-    # نأخذ أول slug للفحص المحافظ.
     slug = relative_path.split("/")[0].strip()
 
     if not slug:
         return False
 
-    # ------------------------------------------------------------------
-    # روابط القنوات الناقلة اليومية.
-    # نستبعد النمط المؤكد فقط.
-    # ------------------------------------------------------------------
     if re.match(
         r"^القنوات-الناقلة-لمباريات-اليوم(?:-|$)",
         slug,
@@ -197,18 +164,12 @@ def is_probable_article_url(url: str) -> bool:
     ):
         return False
 
-    # ------------------------------------------------------------------
-    # صفحات الإحصائيات الواضحة الخاصة بكأس العالم.
-    # ------------------------------------------------------------------
     if re.match(
         r"^(?:إحصائيات|احصائيات)-كأس-العالم(?:-|$)",
         slug,
     ):
         return False
 
-    # ------------------------------------------------------------------
-    # صفحات تجميعية مؤكدة وغير مقالية.
-    # ------------------------------------------------------------------
     exact_non_articles = {
         "الأهداف-العكسية-كأس-العالم",
         "بطاقة-حمراء-مجموعات",
@@ -217,23 +178,6 @@ def is_probable_article_url(url: str) -> bool:
     if slug in exact_non_articles:
         return False
 
-    # ------------------------------------------------------------------
-    # لا نقوم هنا باستبعاد:
-    #
-    # الأهلي
-    # الهلال
-    # النصر
-    # القادسية
-    # صلاح
-    # أستون فيلا
-    # الدوري
-    # كأس
-    # منتخب
-    #
-    # لأن هذه الكلمات قد تكون جزءًا من عنوان خبر حقيقي.
-    # ------------------------------------------------------------------
-
-    # إذا لم يكن الرابط مؤكدًا أنه غير مقالي، نسمح له بالمرور.
     return True
 
 
@@ -347,9 +291,6 @@ def parse_any_time(text: str, now: datetime) -> datetime | None:
 # ============================================================================
 
 def extract_json_ld(soup: BeautifulSoup) -> list[dict]:
-    """
-    Extract JSON-LD objects and nested @graph objects.
-    """
     items: list[dict] = []
 
     def collect(data) -> None:
@@ -415,7 +356,6 @@ def first_meta(soup: BeautifulSoup, *names: str) -> str:
 # ============================================================================
 
 def _clean_image_candidate(value: str | None) -> str:
-    """Clean and normalize a possible image URL."""
     if not value:
         return ""
 
@@ -433,7 +373,6 @@ def _clean_image_candidate(value: str | None) -> str:
     ):
         return ""
 
-    # دعم CSS: url(...)
     match = re.fullmatch(
         r"url\(\s*['\"]?(.*?)['\"]?\s*\)",
         value,
@@ -447,13 +386,6 @@ def _clean_image_candidate(value: str | None) -> str:
 
 
 def _is_valid_article_image(url_str: str) -> bool:
-    """
-    Check if the URL looks like a genuine article image.
-
-    IMPORTANT:
-    Do not reject URLs merely because they contain "365scores".
-    """
-
     value = _clean_image_candidate(url_str)
 
     if not value:
@@ -473,11 +405,9 @@ def _is_valid_article_image(url_str: str) -> bool:
     parsed = urlparse(value)
     path = parsed.path.lower()
 
-    # غالبًا SVG تكون أيقونات أو شعارات.
     if path.endswith(".svg"):
         return False
 
-    # استبعاد الصور الواضح أنها شعار أو placeholder.
     if any(
         pattern in lower_url
         for pattern in DEFAULT_LOGO_PATTERNS
@@ -488,10 +418,6 @@ def _is_valid_article_image(url_str: str) -> bool:
 
 
 def _pick_from_srcset(srcset: str | None) -> str:
-    """
-    Pick the largest/best candidate from srcset.
-    """
-
     if not srcset:
         return ""
 
@@ -548,10 +474,6 @@ def _pick_from_srcset(srcset: str | None) -> str:
 
 
 def _extract_image_urls_from_json(value) -> list[str]:
-    """
-    Recursively extract image URLs from JSON-LD structures.
-    """
-
     results: list[str] = []
 
     if isinstance(value, str):
@@ -598,17 +520,6 @@ def _extract_image_urls_from_json(value) -> list[str]:
 def _extract_dom_image_candidates(
     container,
 ) -> list[str]:
-    """
-    Extract all possible image URLs from a DOM container.
-    Supports:
-    - picture
-    - source
-    - img
-    - lazy loading
-    - srcset
-    - noscript
-    - CSS background-image
-    """
 
     candidates: list[str] = []
 
@@ -634,9 +545,6 @@ def _extract_dom_image_candidates(
         "data-original-srcset",
     )
 
-    # ------------------------------------------------------------------
-    # img / source / picture
-    # ------------------------------------------------------------------
     for element in container.select(
         "picture img, picture source, img, source"
     ):
@@ -664,9 +572,6 @@ def _extract_dom_image_candidates(
                 ):
                     candidates.append(candidate)
 
-    # ------------------------------------------------------------------
-    # noscript
-    # ------------------------------------------------------------------
     for noscript in container.find_all("noscript"):
         raw = noscript.get_text(
             " ",
@@ -712,9 +617,6 @@ def _extract_dom_image_candidates(
         except Exception:
             continue
 
-    # ------------------------------------------------------------------
-    # background-image
-    # ------------------------------------------------------------------
     for tag in container.find_all(
         True,
         style=True,
@@ -743,23 +645,7 @@ def _extract_dom_image_candidates(
 
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
-    """
-    Extract featured article image using BeautifulSoup.
 
-    Search order:
-    1. JSON-LD
-    2. OpenGraph / Twitter meta
-    3. link rel=image_src
-    4. article containers
-    5. picture / source / img
-    6. Lazy Loading attributes
-    7. noscript
-    8. CSS background-image
-    """
-
-    # ------------------------------------------------------------------
-    # 1. JSON-LD
-    # ------------------------------------------------------------------
     for item in extract_json_ld(soup):
         for key in (
             "image",
@@ -777,9 +663,6 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
                 if _is_valid_article_image(candidate):
                     return candidate.strip()
 
-    # ------------------------------------------------------------------
-    # 2. OpenGraph / Twitter
-    # ------------------------------------------------------------------
     meta_image = first_meta(
         soup,
         "og:image",
@@ -795,9 +678,6 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
     ):
         return meta_image.strip()
 
-    # ------------------------------------------------------------------
-    # 3. <link rel="image_src">
-    # ------------------------------------------------------------------
     for link_tag in soup.find_all("link"):
         rel = link_tag.get("rel")
 
@@ -821,9 +701,6 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
         ):
             return href.strip()
 
-    # ------------------------------------------------------------------
-    # 4. Article containers
-    # ------------------------------------------------------------------
     selectors = (
         "article",
         "main",
@@ -866,21 +743,8 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
 async def extract_featured_image_with_playwright(
     page: Page,
 ) -> str:
-    """
-    Final fallback when BeautifulSoup cannot find the article image.
-
-    The browser:
-    1. Scrolls article containers into view.
-    2. Waits for lazy loading.
-    3. Checks currentSrc.
-    4. Checks all lazy-loading attributes.
-    5. Checks srcset.
-    6. Checks picture/source/img.
-    7. Rejects tiny images and obvious icons/logos.
-    """
 
     try:
-        # محاولة تحفيز Lazy Loading.
         await page.evaluate(
             """async () => {
                 const containers = document.querySelectorAll(
@@ -1044,14 +908,12 @@ async def extract_featured_image_with_playwright(
                     for (const element of elements) {
                         const candidates = [];
 
-                        // الصورة التي اختارها المتصفح فعليًا.
                         if (element.currentSrc) {
                             candidates.push(
                                 element.currentSrc
                             );
                         }
 
-                        // srcset
                         const srcsetAttributes = [
                             'srcset',
                             'data-srcset',
@@ -1078,7 +940,6 @@ async def extract_featured_image_with_playwright(
                             }
                         }
 
-                        // جميع خصائص Lazy Loading المحتملة.
                         const directAttributes = [
                             'src',
                             'data-src',
@@ -1125,8 +986,6 @@ async def extract_featured_image_with_playwright(
 
                             seenUrls.add(url);
 
-                            // نستبعد الصور الصغيرة فقط
-                            // عندما تكون أبعادها معروفة.
                             if (
                                 element.tagName === 'IMG'
                             ) {
@@ -1258,95 +1117,558 @@ def extract_published_at(
 
 
 # ============================================================================
-# Article Text
+# Article Text Helpers
 # ============================================================================
 
-def extract_article_text(
-    soup: BeautifulSoup,
-) -> str:
+def _normalize_article_line(text: str) -> str:
+    """
+    Normalize a single article text line while preserving
+    Arabic punctuation and sentence structure.
+    """
 
-    for item in extract_json_ld(soup):
-        body = (
-            item.get("articleBody")
-            or item.get("description")
-        )
+    if not text:
+        return ""
 
-        if (
-            isinstance(body, str)
-            and len(body.strip()) > 80
-        ):
-            return body.strip()
+    text = html.unescape(text)
 
-    paragraphs = []
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    ).strip()
 
-    for p in soup.select(
-        "article p, "
-        "main p, "
-        "[class*='article'] p, "
-        "[class*='News'] p, "
-        "[class*='text'] p, "
-        "p"
-    ):
-        text = p.get_text(
-            " ",
-            strip=True,
-        )
+    return text
 
-        if text and len(text) > 15:
-            paragraphs.append(text)
 
-    if paragraphs:
-        full_p = "\n".join(paragraphs)
+def _is_noise_article_text(text: str) -> bool:
+    """
+    Reject obvious UI / navigation / advertising text.
 
-        if len(full_p) >= 80:
-            return full_p
+    This is intentionally conservative so real article sentences
+    are not accidentally removed.
+    """
 
-    candidates = []
+    if not text:
+        return True
 
-    selectors = (
-        "article",
-        "main",
-        "[class*='article']",
-        "[class*='Article']",
-        "[class*='news']",
-        "[class*='News']",
-        "[class*='content']",
-        "[class*='Content']",
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        text,
+    ).strip()
+
+    if len(normalized) < 3:
+        return True
+
+    noise_exact = {
+        "مشاركة",
+        "شارك",
+        "التعليقات",
+        "اقرأ أيضًا",
+        "اقرأ ايضا",
+        "المزيد",
+        "إعلان",
+        "اعلان",
+        "التالي",
+        "السابق",
+        "الرئيسية",
+        "الرئيسيه",
+    }
+
+    if normalized in noise_exact:
+        return True
+
+    return False
+
+
+def _collect_article_paragraphs(
+    container,
+) -> list[str]:
+    """
+    Collect paragraph-like content from an article container.
+
+    Uses p first, then common text blocks if necessary.
+    """
+
+    paragraphs: list[str] = []
+    seen: set[str] = set()
+
+    # النصوص الفعلية في المقال.
+    nodes = container.select(
+        "p, "
+        "li, "
+        "[data-testid*='paragraph'], "
+        "[data-test*='paragraph'], "
+        "[class*='paragraph'], "
+        "[class*='Paragraph']"
     )
 
-    for selector in selectors:
-        if node := soup.select_one(selector):
-            if text := node.get_text(
-                "\n",
-                strip=True,
-            ):
-                candidates.append(text)
-
-    if not candidates:
-        candidates.append(
-            soup.get_text(
-                "\n",
+    for node in nodes:
+        text = _normalize_article_line(
+            node.get_text(
+                " ",
                 strip=True,
             )
         )
 
-    text = max(
-        candidates,
-        key=len,
-        default="",
-    )
+        if _is_noise_article_text(text):
+            continue
 
-    lines = [
-        re.sub(
+        # تجنب التكرار الناتج عن عناصر متداخلة.
+        key = re.sub(
             r"\s+",
             " ",
-            line,
+            text,
         ).strip()
-        for line in text.splitlines()
-        if line.strip()
-    ]
 
-    return "\n".join(lines)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        paragraphs.append(text)
+
+    return paragraphs
+
+
+def _clean_article_container(
+    container,
+) -> None:
+    """
+    Remove obvious non-content elements before extracting
+    visible article text.
+    """
+
+    for selector in (
+        "script",
+        "style",
+        "noscript",
+        "svg",
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "form",
+        "button",
+        "[role='navigation']",
+        "[role='button']",
+        "[aria-label*='share']",
+        "[class*='share']",
+        "[class*='Share']",
+        "[class*='comment']",
+        "[class*='Comment']",
+        "[class*='related']",
+        "[class*='Related']",
+        "[class*='recommend']",
+        "[class*='Recommend']",
+        "[class*='advert']",
+        "[class*='Advert']",
+        "[class*='banner']",
+        "[class*='Banner']",
+    ):
+        for node in container.select(selector):
+            node.decompose()
+
+
+def extract_article_text(
+    soup: BeautifulSoup,
+) -> str:
+    """
+    Extract the complete article text.
+
+    Strategy:
+    1. Prefer articleBody from JSON-LD only when it is substantial.
+    2. Search actual article containers.
+    3. Collect all paragraph-like elements.
+    4. Remove UI/navigation noise.
+    5. Preserve the complete text instead of selecting
+       the longest generic container.
+    """
+
+    # ------------------------------------------------------------------
+    # 1. JSON-LD articleBody
+    # ------------------------------------------------------------------
+    json_ld_bodies: list[str] = []
+
+    for item in extract_json_ld(soup):
+        body = item.get("articleBody")
+
+        if (
+            isinstance(body, str)
+            and len(body.strip()) >= 120
+        ):
+            cleaned = _normalize_article_line(body)
+
+            if cleaned:
+                json_ld_bodies.append(cleaned)
+
+    # نستخدم articleBody فقط إذا كان واضحًا أنه محتوى مقال
+    # وليس description مختصرًا.
+    if json_ld_bodies:
+        best_body = max(
+            json_ld_bodies,
+            key=len,
+        )
+
+        if len(best_body) >= 200:
+            return best_body
+
+    # ------------------------------------------------------------------
+    # 2. العثور على حاوية المقال
+    # ------------------------------------------------------------------
+    selectors = (
+        "article",
+        "[data-testid*='article']",
+        "[data-test*='article']",
+        "[class*='article-body']",
+        "[class*='ArticleBody']",
+        "[class*='article-content']",
+        "[class*='ArticleContent']",
+        "[class*='article']",
+        "[class*='Article']",
+        "main",
+        "[class*='news-content']",
+        "[class*='NewsContent']",
+        "[class*='content']",
+        "[class*='Content']",
+    )
+
+    containers = []
+
+    seen_containers = set()
+
+    for selector in selectors:
+        for node in soup.select(selector):
+            node_id = id(node)
+
+            if node_id in seen_containers:
+                continue
+
+            seen_containers.add(node_id)
+            containers.append(node)
+
+    # ------------------------------------------------------------------
+    # 3. جمع الفقرات من كل حاوية
+    # ------------------------------------------------------------------
+    best_paragraphs: list[str] = []
+
+    for container in containers:
+        # لا نريد تدمير الـ soup الأصلي إذا كان العنصر سيستخدم لاحقًا.
+        container_copy = BeautifulSoup(
+            str(container),
+            "html.parser",
+        )
+
+        _clean_article_container(
+            container_copy
+        )
+
+        paragraphs = _collect_article_paragraphs(
+            container_copy
+        )
+
+        combined_length = sum(
+            len(item)
+            for item in paragraphs
+        )
+
+        best_length = sum(
+            len(item)
+            for item in best_paragraphs
+        )
+
+        if combined_length > best_length:
+            best_paragraphs = paragraphs
+
+    # ------------------------------------------------------------------
+    # 4. إذا وجدنا فقرات حقيقية، نعيدها كاملة.
+    # ------------------------------------------------------------------
+    if best_paragraphs:
+        full_text = "\n".join(
+            best_paragraphs
+        ).strip()
+
+        if len(full_text) >= 80:
+            return full_text
+
+    # ------------------------------------------------------------------
+    # 5. Fallback عام جدًا.
+    # ------------------------------------------------------------------
+    paragraphs = []
+
+    for p in soup.select("p"):
+        text = _normalize_article_line(
+            p.get_text(
+                " ",
+                strip=True,
+            )
+        )
+
+        if _is_noise_article_text(text):
+            continue
+
+        if len(text) < 15:
+            continue
+
+        if text not in paragraphs:
+            paragraphs.append(text)
+
+    if paragraphs:
+        return "\n".join(paragraphs).strip()
+
+    # ------------------------------------------------------------------
+    # 6. آخر fallback.
+    # ------------------------------------------------------------------
+    text = soup.get_text(
+        "\n",
+        strip=True,
+    )
+
+    lines = []
+
+    for line in text.splitlines():
+        normalized = _normalize_article_line(line)
+
+        if not _is_noise_article_text(normalized):
+            lines.append(normalized)
+
+    return "\n".join(lines).strip()
+
+
+# ============================================================================
+# Playwright Article Text Fallback
+# ============================================================================
+
+async def extract_article_text_with_playwright(
+    page: Page,
+) -> str:
+    """
+    Extract the article text directly from the live DOM.
+
+    This is important because 365Scores can load article paragraphs
+    dynamically after the initial HTML response.
+    """
+
+    try:
+        # --------------------------------------------------------------
+        # تحفيز Lazy Loading وتحميل المحتوى الديناميكي.
+        # --------------------------------------------------------------
+        await page.evaluate(
+            """async () => {
+                const containers = document.querySelectorAll(
+                    [
+                        'article',
+                        '[data-testid*="article"]',
+                        '[data-test*="article"]',
+                        '[class*="article"]',
+                        '[class*="Article"]',
+                        '[class*="news"]',
+                        '[class*="News"]',
+                        'main'
+                    ].join(',')
+                );
+
+                for (const container of containers) {
+                    try {
+                        container.scrollIntoView({
+                            block: 'center',
+                            behavior: 'instant'
+                        });
+                    } catch (_) {}
+                }
+
+                window.scrollTo({
+                    top: document.body.scrollHeight,
+                    behavior: 'instant'
+                });
+
+                await new Promise(resolve =>
+                    setTimeout(resolve, 800)
+                );
+
+                window.scrollTo({
+                    top: 0,
+                    behavior: 'instant'
+                });
+
+                await new Promise(resolve =>
+                    setTimeout(resolve, 1200)
+                );
+            }"""
+        )
+
+        result = await page.evaluate(
+            """() => {
+                const selectors = [
+                    'article',
+                    '[data-testid*="article"]',
+                    '[data-test*="article"]',
+                    '[class*="article-body"]',
+                    '[class*="ArticleBody"]',
+                    '[class*="article-content"]',
+                    '[class*="ArticleContent"]',
+                    '[class*="article"]',
+                    '[class*="Article"]',
+                    'main',
+                    '[class*="news-content"]',
+                    '[class*="NewsContent"]',
+                    '[class*="content"]',
+                    '[class*="Content"]'
+                ];
+
+                const noiseSelectors = [
+                    'script',
+                    'style',
+                    'noscript',
+                    'svg',
+                    'nav',
+                    'header',
+                    'footer',
+                    'aside',
+                    'form',
+                    'button',
+                    '[role="navigation"]',
+                    '[role="button"]',
+                    '[class*="share"]',
+                    '[class*="Share"]',
+                    '[class*="comment"]',
+                    '[class*="Comment"]',
+                    '[class*="related"]',
+                    '[class*="Related"]',
+                    '[class*="recommend"]',
+                    '[class*="Recommend"]',
+                    '[class*="advert"]',
+                    '[class*="Advert"]',
+                    '[class*="banner"]',
+                    '[class*="Banner"]'
+                ];
+
+                const noiseExact = new Set([
+                    'مشاركة',
+                    'شارك',
+                    'التعليقات',
+                    'اقرأ أيضًا',
+                    'اقرأ ايضا',
+                    'المزيد',
+                    'إعلان',
+                    'اعلان',
+                    'التالي',
+                    'السابق',
+                    'الرئيسية',
+                    'الرئيسيه'
+                ]);
+
+                const normalize = (value) => {
+                    return String(value || '')
+                        .replace(/\\s+/g, ' ')
+                        .trim();
+                };
+
+                const isNoise = (value) => {
+                    const text = normalize(value);
+
+                    if (!text || text.length < 3) {
+                        return true;
+                    }
+
+                    if (noiseExact.has(text)) {
+                        return true;
+                    }
+
+                    return false;
+                };
+
+                const containers = [];
+
+                for (const selector of selectors) {
+                    document
+                        .querySelectorAll(selector)
+                        .forEach(node => {
+                            if (!containers.includes(node)) {
+                                containers.push(node);
+                            }
+                        });
+                }
+
+                let best = [];
+
+                for (const container of containers) {
+                    const nodes = container.querySelectorAll(
+                        [
+                            'p',
+                            'li',
+                            '[data-testid*="paragraph"]',
+                            '[data-test*="paragraph"]',
+                            '[class*="paragraph"]',
+                            '[class*="Paragraph"]'
+                        ].join(',')
+                    );
+
+                    const paragraphs = [];
+                    const seen = new Set();
+
+                    for (const node of nodes) {
+                        let text = normalize(
+                            node.innerText ||
+                            node.textContent ||
+                            ''
+                        );
+
+                        if (isNoise(text)) {
+                            continue;
+                        }
+
+                        if (text.length < 15) {
+                            continue;
+                        }
+
+                        if (seen.has(text)) {
+                            continue;
+                        }
+
+                        seen.add(text);
+                        paragraphs.push(text);
+                    }
+
+                    const currentLength =
+                        paragraphs.reduce(
+                            (sum, value) =>
+                                sum + value.length,
+                            0
+                        );
+
+                    const bestLength =
+                        best.reduce(
+                            (sum, value) =>
+                                sum + value.length,
+                            0
+                        );
+
+                    if (
+                        currentLength > bestLength
+                        && paragraphs.length > 0
+                    ) {
+                        best = paragraphs;
+                    }
+                }
+
+                if (best.length > 0) {
+                    return best.join('\\n');
+                }
+
+                return '';
+            }"""
+        )
+
+        if isinstance(result, str):
+            result = result.strip()
+
+            if len(result) >= 80:
+                return result
+
+    except Exception:
+        pass
+
+    return ""
 
 
 # ============================================================================
@@ -1379,7 +1701,6 @@ async def collect_article_cards(
                 str(item.get("href", "")),
             )
 
-            # فلترة محافظة جدًا قبل مرحلة الجلب.
             if not is_probable_article_url(url):
                 continue
 
@@ -1463,9 +1784,59 @@ async def fetch_article(
         timeout=45_000,
     )
 
-    # انتظار أولي لتحميل الصفحة.
+    # انتظار تحميل الصفحة.
     await page.wait_for_timeout(1_500)
 
+    # --------------------------------------------------------------
+    # إعطاء 365Scores وقتًا إضافيًا لتحميل المقال نفسه.
+    # --------------------------------------------------------------
+    try:
+        await page.wait_for_load_state(
+            "networkidle",
+            timeout=8_000,
+        )
+    except Exception:
+        pass
+
+    await page.wait_for_timeout(1_500)
+
+    # --------------------------------------------------------------
+    # تحميل المحتوى الديناميكي قبل أخذ HTML.
+    # --------------------------------------------------------------
+    try:
+        await page.evaluate(
+            """async () => {
+                const article = document.querySelector(
+                    [
+                        'article',
+                        '[data-testid*="article"]',
+                        '[data-test*="article"]',
+                        '[class*="article"]',
+                        '[class*="Article"]',
+                        'main'
+                    ].join(',')
+                );
+
+                if (article) {
+                    try {
+                        article.scrollIntoView({
+                            block: 'center',
+                            behavior: 'instant'
+                        });
+                    } catch (_) {}
+                }
+
+                await new Promise(resolve =>
+                    setTimeout(resolve, 1200)
+                );
+            }"""
+        )
+    except Exception:
+        pass
+
+    # --------------------------------------------------------------
+    # أخذ HTML بعد انتظار المحتوى الديناميكي.
+    # --------------------------------------------------------------
     html_content = await page.content()
 
     soup = BeautifulSoup(
@@ -1490,34 +1861,50 @@ async def fetch_article(
     )
 
     # ==================================================================
-    # المرحلة الأولى:
-    # استخراج الصورة من HTML / JSON-LD / Meta / Lazy attributes.
+    # IMAGE
     # ==================================================================
+
     image_url = extract_featured_image(soup)
 
-    # ==================================================================
-    # المرحلة الثانية:
-    # إذا لم يجد BeautifulSoup الصورة، نستخدم المتصفح نفسه.
-    #
-    # هذا يسمح لـ Lazy Loading بالعمل وقراءة currentSrc.
-    # ==================================================================
     if not image_url:
         image_url = await extract_featured_image_with_playwright(
             page
         )
 
-    # ==================================================================
-    # توحيد الرابط بعد استخراج الصورة.
-    # ==================================================================
     image_url = normalize_url(
         summary.url,
         image_url,
     )
 
+    # ==================================================================
+    # ARTICLE TEXT
+    # ==================================================================
+
+    # أول محاولة من HTML الكامل بعد الانتظار.
+    article_text = extract_article_text(soup)
+
+    # إذا كان النص قصيرًا أو ناقصًا، نقرأ DOM الحي مباشرة.
+    if len(article_text) < 200:
+        playwright_text = await extract_article_text_with_playwright(
+            page
+        )
+
+        if len(playwright_text) > len(article_text):
+            article_text = playwright_text
+
+    # محاولة أخيرة إذا كان هناك نص جزئي فقط.
+    if len(article_text) < 80:
+        playwright_text = await extract_article_text_with_playwright(
+            page
+        )
+
+        if len(playwright_text) > len(article_text):
+            article_text = playwright_text
+
     return SourceArticle(
         url=summary.url,
         title=title.strip(),
-        text=extract_article_text(soup).strip(),
+        text=article_text.strip(),
         image_url=image_url,
         published_at=(
             extract_published_at(soup)
@@ -1612,7 +1999,6 @@ async def discover_articles(
                     f"No article candidates discovered "
                     f"from {index_url}"
                 )
-
             else:
                 print(
                     f"DISCOVERY | "
@@ -1664,9 +2050,6 @@ async def fetch_source_articles(
                         candidate,
                     )
 
-                    # لا نستبعد هنا مباشرة.
-                    # مرحلة أخرى في المشروع يمكنها اتخاذ قرار
-                    # الاستبعاد النهائي إذا بقيت الصورة فارغة.
                     articles.append(article)
 
                 except Exception as exc:

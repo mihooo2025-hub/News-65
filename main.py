@@ -49,7 +49,9 @@ def run(settings: Settings) -> int:
     for url, error in fetch_errors:
         report.failed.append((url, error))
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.lookback_hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        hours=settings.lookback_hours
+    )
 
     logger.info(
         "Discovery returned candidates=%s fetched_articles=%s",
@@ -68,20 +70,42 @@ def run(settings: Settings) -> int:
             continue
 
         # 2. Check for featured image
+        #
+        # scraper_365scores.py now performs:
+        # - JSON-LD extraction
+        # - OpenGraph / Twitter image extraction
+        # - <picture> / <source> / <img>
+        # - Lazy Loading attributes
+        # - srcset / data-srcset
+        # - noscript
+        # - CSS background-image
+        # - Playwright currentSrc fallback
+        #
+        # Therefore, reaching this point without an image means that
+        # all available image extraction methods have failed.
         if not article.image_url:
             report.skipped_no_image += 1
-            logger.info("Skipping article without featured image: %s", article.url)
+            logger.warning(
+                "Skipping article without featured image after all extraction attempts: %s",
+                article.url,
+            )
             continue
 
         # 3. Check for article text length
         if not article.text or len(article.text) < 80:
             report.failed.append(
-                (article.url, "Source article text is too short or empty")
+                (
+                    article.url,
+                    "Source article text is too short or empty",
+                )
             )
             continue
 
         # 4. Check lookback window cutoff
-        if article.published_at and article.published_at < cutoff:
+        if (
+            article.published_at
+            and article.published_at < cutoff
+        ):
             report.skipped_old += 1
             continue
 
@@ -98,32 +122,84 @@ def run(settings: Settings) -> int:
 
             # Delay before AI rewriting to respect Rate Limits
             if settings.rewrite_delay_seconds > 0:
-                time.sleep(settings.rewrite_delay_seconds)
+                time.sleep(
+                    settings.rewrite_delay_seconds
+                )
 
             rewritten = rewriter.rewrite(article)
 
             slug = publisher.build_slug(article.url)
-            post_id, created = publisher.createDraft(article, rewritten, slug) if hasattr(publisher, 'createDraft') else publisher.create_draft(article, rewritten, slug)
+
+            post_id, created = (
+                publisher.createDraft(
+                    article,
+                    rewritten,
+                    slug,
+                )
+                if hasattr(publisher, "createDraft")
+                else publisher.create_draft(
+                    article,
+                    rewritten,
+                    slug,
+                )
+            )
 
             if not created:
-                mark_processed(state, article_id, post_id)
-                save_state(settings.state_file, state)
+                mark_processed(
+                    state,
+                    article_id,
+                    post_id,
+                )
+                save_state(
+                    settings.state_file,
+                    state,
+                )
+
                 report.duplicate += 1
                 continue
 
-            mark_processed(state, article_id, post_id)
-            save_state(settings.state_file, state)
+            mark_processed(
+                state,
+                article_id,
+                post_id,
+            )
 
-            report.created.append((rewritten.title, article.url))
-            logger.info("Draft created: %s (%s)", rewritten.title, post_id)
+            save_state(
+                settings.state_file,
+                state,
+            )
+
+            report.created.append(
+                (
+                    rewritten.title,
+                    article.url,
+                )
+            )
+
+            logger.info(
+                "Draft created: %s (%s)",
+                rewritten.title,
+                post_id,
+            )
 
             # Delay after creating WordPress draft
             if settings.publish_delay_seconds > 0:
-                time.sleep(settings.publish_delay_seconds)
+                time.sleep(
+                    settings.publish_delay_seconds
+                )
 
         except Exception as exc:
-            logger.exception("Failed processing %s", article.url)
-            report.failed.append((article.url, str(exc)))
+            logger.exception(
+                "Failed processing %s",
+                article.url,
+            )
+
+            report.failed.append(
+                (
+                    article.url,
+                    str(exc),
+                )
+            )
 
     logger.info(
         "Done | created=%s old=%s duplicate=%s no_image=%s failed=%s",
@@ -143,11 +219,16 @@ def run(settings: Settings) -> int:
             duplicate=report.duplicate,
             no_image=report.skipped_no_image,
         )
+
     except Exception:
-        logger.exception("Telegram report failed")
+        logger.exception(
+            "Telegram report failed"
+        )
 
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(run(load_settings()))
+    raise SystemExit(
+        run(load_settings())
+    )

@@ -96,13 +96,14 @@ def run(settings: Settings) -> int:
         try:
             logger.info("Processing: %s", article.title)
 
+            # Delay before AI rewriting to respect Rate Limits
+            if settings.rewrite_delay_seconds > 0:
+                time.sleep(settings.rewrite_delay_seconds)
+
             rewritten = rewriter.rewrite(article)
 
-            # Delay after AI rewriting
-            time.sleep(settings.rewrite_delay_seconds)
-
             slug = publisher.build_slug(article.url)
-            post_id, created = publisher.create_draft(article, rewritten, slug)
+            post_id, created = publisher.createDraft(article, rewritten, slug) if hasattr(publisher, 'createDraft') else publisher.create_draft(article, rewritten, slug)
 
             if not created:
                 mark_processed(state, article_id, post_id)
@@ -117,7 +118,8 @@ def run(settings: Settings) -> int:
             logger.info("Draft created: %s (%s)", rewritten.title, post_id)
 
             # Delay after creating WordPress draft
-            time.sleep(settings.publish_delay_seconds)
+            if settings.publish_delay_seconds > 0:
+                time.sleep(settings.publish_delay_seconds)
 
         except Exception as exc:
             logger.exception("Failed processing %s", article.url)

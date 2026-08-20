@@ -107,6 +107,20 @@ class GeminiRewriter:
         models = [m.strip() for m in raw_model.split(",") if m.strip()]
         return models if models else ["gemini-2.5-flash"]
 
+    @staticmethod
+    def _clean_and_parse_json(text: str) -> dict:
+        """يستخرج ويحلل نص الـ JSON بأمان لمنع استثناءات الأحرف والنصوص المقطوعة."""
+        match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
+        if match:
+            text = match.group(1)
+        
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            cleaned_text = re.sub(r'[\r\n]+', ' ', text)
+            cleaned_text = re.sub(r',(\s*[\}\]])', r'\1', cleaned_text)
+            return json.loads(cleaned_text)
+
     def rewrite(self, article: SourceArticle) -> RewrittenArticle:
         allowed_for_model = [
             c for c in self.settings.categories
@@ -137,7 +151,7 @@ class GeminiRewriter:
                             contents=prompt,
                             config={
                                 "temperature": 0.2,
-                                "max_output_tokens": 1800,
+                                "max_output_tokens": 4096,
                                 "response_mime_type": "application/json",
                                 "response_json_schema": SCHEMA,
                             },
@@ -149,17 +163,17 @@ class GeminiRewriter:
                         last_exception = exc
                         if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
                             logger.warning("Rate limit (429) hit on Key %d with model %s.", self.current_key_index, model_name)
-                            # إذا كان هناك مفتاح آخر متاحة نقوم بالتبديل فوراً
                             if len(self.api_keys) > 1 and key_attempt < len(self.api_keys) - 1:
                                 self._switch_to_next_key()
                                 break
                             
-                            wait_time = 15 + (attempt * 5)
+                            wait_time = 10
                             logger.warning("Retrying in %d seconds...", wait_time)
                             time.sleep(wait_time)
                         else:
                             logger.warning("Model %s failed with non-rate-limit error: %s", model_name, exc)
-                            break
+                            if attempt < max_retries - 1:
+                                time.sleep(10)
 
                 if response and response.text:
                     break
@@ -173,8 +187,8 @@ class GeminiRewriter:
             raise RuntimeError("Gemini returned an empty response")
 
         try:
-            data = json.loads(response.text)
-        except json.JSONDecodeError as exc:
+            data = self._clean_and_parse_json(response.text)
+        except Exception as exc:
             raise RuntimeError("Gemini returned invalid JSON") from exc
 
         title = str(data.get("title", "")).strip()

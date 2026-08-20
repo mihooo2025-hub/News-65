@@ -12,7 +12,7 @@ import asyncio
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from playwright.async_api import Page, async_playwright
@@ -38,19 +38,27 @@ def is_probable_article_url(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
-    path = parsed.path.lower()
     
-    # قائمة الكلمات الدالة على الصفحات غير الخبرية (الأقسام، التاجات، الصفحات التعريفية)
-    non_article_keywords = (
+    # فك ترميز الرابط لقراءة الكلمات العربية بوضوح
+    path = unquote(parsed.path.lower()).rstrip("/")
+    
+    # استبعاد المسار الرئيسي
+    if path in {"/ar/news/magazine", "/news/magazine", ""}:
+        return False
+
+    # قائمة استبعاد شاملة للأقسام، التاجات، الكويزات، والدوريات
+    non_article_prefixes = (
         "/login", "/signup", "/matches", "/teams", "/players",
         "/category/", "/content-tag/", "/tag/", "/magazine/category/",
-        "/كرة-القدم-", "/نادي-", "/الكرة-", "/الدوري-", "/منتخب-", "/دوري-"
+        "/news/magazine/كرة-القدم", "/news/magazine/نادي-", "/news/magazine/الكرة-",
+        "/news/magazine/الدوري-", "/news/magazine/منتخب-", "/news/magazine/دوري-",
+        "/news/magazine/كويز-"
     )
     
-    if any(k in path for k in non_article_keywords):
+    if any(pattern in path for pattern in non_article_prefixes):
         return False
         
-    return "/news/magazine/" in path and not path.endswith("/news/magazine/")
+    return "/news/magazine/" in path
 
 
 # Time Parsing Utilities
@@ -129,7 +137,6 @@ def first_meta(soup: BeautifulSoup, *names: str) -> str:
 
 
 def _is_valid_article_image(url_str: str) -> bool:
-    """تتأكد من أن رابط الصورة ليس شعار الموقع الافتراضي أو صورة عامة."""
     if not url_str or not isinstance(url_str, str):
         return False
     lower_url = url_str.lower().strip()
@@ -137,7 +144,7 @@ def _is_valid_article_image(url_str: str) -> bool:
 
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
-    # 1. البحث في JSON-LD Schema أولاً (الأكثر دقة في مقالات 365Scores)
+    # 1. JSON-LD Schema
     for item in extract_json_ld(soup):
         img = item.get("image")
         if isinstance(img, str) and _is_valid_article_image(img):
@@ -150,12 +157,12 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
         if isinstance(img, dict) and img.get("url") and _is_valid_article_image(str(img["url"])):
             return str(img["url"]).strip()
 
-    # 2. الاعتماد على Meta Tags (og:image)
+    # 2. Meta Tags (og:image)
     if val := first_meta(soup, "og:image", "twitter:image"):
         if _is_valid_article_image(val):
             return val
 
-    # 3. البحث داخل عناصر المقال DOM
+    # 3. DOM fallback
     for selector in ("article", "main", "[class*='article']", "[class*='Article']", "[class*='news']"):
         container = soup.select_one(selector)
         if not container:
@@ -168,7 +175,7 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
                 if _is_valid_article_image(first_src):
                     return first_src.strip()
                     
-            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src") or img.get("data-src-webp")
             if src and _is_valid_article_image(src):
                 return src.strip()
 
@@ -212,13 +219,11 @@ def extract_published_at(soup: BeautifulSoup) -> datetime | None:
 
 
 def extract_article_text(soup: BeautifulSoup) -> str:
-    # Fallback 1: JSON-LD Schema (Best quality for 365Scores)
     for item in extract_json_ld(soup):
         body = item.get("articleBody") or item.get("description")
         if isinstance(body, str) and len(body.strip()) > 80:
             return body.strip()
 
-    # Fallback 2: Direct Paragraph Extraction
     paragraphs = []
     for p in soup.select("article p, main p, [class*='article'] p, [class*='News'] p, [class*='text'] p, p"):
         text = p.get_text(" ", strip=True)
@@ -227,7 +232,6 @@ def extract_article_text(soup: BeautifulSoup) -> str:
     if paragraphs and len(full_p := "\n".join(paragraphs)) >= 80:
         return full_p
 
-    # Fallback 3: Container Text Extraction
     candidates = []
     selectors = ("article", "main", "[class*='article']", "[class*='Article']", "[class*='news']", "[class*='News']", "[class*='content']", "[class*='Content']")
     for selector in selectors:
@@ -342,8 +346,6 @@ async def discover_articles(source_url: str, max_articles: int) -> tuple[list[Ar
                 errors.append(f"No article candidates discovered from {index_url}")
             else:
                 print(f"DISCOVERY | index={index_url} candidates={len(summaries)}")
-                for item in summaries[:15]:
-                    print(f"DISCOVERY | {item.published_at} | {item.title[:120]} | {item.url}")
 
             candidates = summaries
         except Exception as exc:

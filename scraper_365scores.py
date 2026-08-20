@@ -24,7 +24,7 @@ from models import ArticleSummary, SourceArticle
 
 ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-DEFAULT_LOGO_PATTERNS = ("logo", "icon", "avatar", "favicon", "placeholder", "default", "no-image")
+DEFAULT_LOGO_PATTERNS = ("site-logo", "favicon", "default-avatar")
 ARTICLE_ROOT = "/ar/news/magazine"
 
 
@@ -55,7 +55,6 @@ def is_probable_article_url(url: str) -> bool:
             return False
         
         slug = rel_path.split("/")[0]
-        # تصفية روابط الأندية والأقسام لضمان عدم معاملتها كمقالات
         if re.match(r"^(القنوات-الناقلة|إحصائيات|احصائيات|نادي-|منتخب-|فريق-)", slug) or slug in {"الأهداف-العكسية-كأس-العالم", "بطاقة-حمراء-مجموعات"}:
             return False
         return True
@@ -135,33 +134,45 @@ def _is_valid_image(url: str) -> bool:
     if not url or url.startswith(("data:", "blob:", "javascript:")):
         return False
     lower = url.lower()
-    return not lower.endswith(".svg") and not any(p in lower for p in DEFAULT_LOGO_PATTERNS)
+    if any(p in lower for p in DEFAULT_LOGO_PATTERNS):
+        return False
+    return not lower.endswith(".svg")
 
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
-    # 1. الاستخراج من بيانات JSON-LD
+    # 1. OpenGraph & Twitter tags
+    meta = first_meta(soup, "og:image", "twitter:image", "image")
+    if _is_valid_image(meta):
+        if meta.startswith("//"):
+            meta = "https:" + meta
+        return meta
+
+    # 2. JSON-LD Extraction
     for item in extract_json_ld(soup):
         for k in ("image", "primaryImageOfPage", "thumbnailUrl"):
             val = item.get(k)
             img = val[0] if isinstance(val, list) else (val.get("url") if isinstance(val, dict) else val)
             if isinstance(img, str) and _is_valid_image(img):
-                return img.strip()
+                img = img.strip()
+                if img.startswith("//"):
+                    img = "https:" + img
+                return img
 
-    # 2. الاستخراج من Meta tags
-    meta = first_meta(soup, "og:image", "twitter:image")
-    if _is_valid_image(meta):
-        return meta
-
-    # 3. الاستخراج من العناصر بالصفحة مع دعم التحميل الكسول (Lazy Loading)
-    for img in soup.select("article img, main img, [class*='article'] img, img"):
+    # 3. HTML5 <picture> / <source> / <img> with Lazy Loading & srcset
+    for img in soup.select("article img, main img, figure img, img"):
         src = (
             img.get("src")
             or img.get("data-src")
             or img.get("data-lazy-src")
             or img.get("data-original")
+            or (img.get("srcset", "").split(",")[0].split()[0] if img.get("srcset") else "")
         )
         if src and _is_valid_image(src):
-            return src.strip()
+            src = src.strip()
+            if src.startswith("//"):
+                src = "https:" + src
+            return src
+
     return ""
 
 
@@ -203,15 +214,19 @@ def extract_article_text(soup: BeautifulSoup) -> str:
 async def extract_playwright_fallbacks(page: Page) -> tuple[str, str]:
     try:
         data = await page.evaluate("""() => {
-            const isVal = (u) => u && !u.startsWith('data:') && !u.endsWith('.svg') && !['logo','icon','avatar'].some(p => u.includes(p));
+            const isVal = (u) => u && !u.startsWith('data:') && !u.endsWith('.svg') && !['site-logo','favicon','default-avatar'].some(p => u.includes(p));
             let img = '';
             for (let el of document.querySelectorAll('article img, main img, img')) {
                 let src = el.currentSrc || el.src || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original');
-                if (isVal(src)) { img = src; break; }
+                if (isVal(src)) {
+                    if (src.startsWith('//')) src = 'https:' + src;
+                    img = src;
+                    break;
+                }
             }
             let text = [];
             for (let p of document.querySelectorAll('article p, main p, p')) {
-                let t = p.innerText.strip ? p.innerText.strip() : p.innerText.trim();
+                let t = p.innerText ? p.innerText.trim() : '';
                 if (t.length > 15) text.push(t);
             }
             return { image: img, text: text.join('\\n') };

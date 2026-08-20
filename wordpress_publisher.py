@@ -91,6 +91,9 @@ class WordPressPublisher:
         return items[0] if items else None
 
     def upload_media(self, image_url: str, title: str) -> int:
+        if image_url.startswith("//"):
+            image_url = "https:" + image_url
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
@@ -105,12 +108,15 @@ class WordPressPublisher:
         )
         if not response.ok or not response.content:
             raise RuntimeError(f"Featured image download failed: {response.status_code}")
+
         content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip()
         if not content_type.startswith("image/"):
             guessed = mimetypes.guess_type(urlparse(image_url).path)[0]
             content_type = guessed or "image/jpeg"
+
         ext = mimetypes.guess_extension(content_type) or ".jpg"
         filename = re.sub(r"[^\w\-]+", "-", title, flags=re.UNICODE).strip("-")[:80] + ext
+
         result = self.session.post(
             f"{self.api_base}/media",
             files={"file": (filename, response.content, content_type)},

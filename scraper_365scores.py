@@ -128,36 +128,47 @@ def _is_valid_article_image(url_str: str) -> bool:
 
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
-    # 1. البحث في صور عناصر المقال أولاً (الأكثر دقة للخبر الحقيقي)
-    for img in soup.select("article img, main img, [class*='article'] img, [class*='Article'] img"):
-        src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
-        if src and _is_valid_article_image(src):
-            return src.strip()
+    # 1. البحث في صور المقال الحقيقية عبر وسوم img و source و picture والـ Lazy Loading
+    for selector in ("article", "main", "[class*='article']", "[class*='Article']", "[class*='news']"):
+        container = soup.select_one(selector)
+        if not container:
+            continue
+            
+        for img in container.select("img, source"):
+            srcset = img.get("srcset") or img.get("data-srcset")
+            if srcset:
+                first_src = srcset.split(",")[0].strip().split(" ")[0]
+                if _is_valid_article_image(first_src):
+                    return first_src.strip()
+                    
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
+            if src and _is_valid_article_image(src):
+                return src.strip()
+
+        for tag in container.find_all(True, style=True):
+            style = tag.get("style", "")
+            if "background-image" in style and "url(" in style:
+                match = re.search(r'url\(([\'"]?)(.*?)\1\)', style)
+                if match and _is_valid_article_image(match.group(2)):
+                    return match.group(2).strip()
 
     # 2. البحث في JSON-LD Schema
     for item in extract_json_ld(soup):
         img = item.get("image")
         if isinstance(img, str) and _is_valid_article_image(img):
             return img.strip()
-        if isinstance(img, list) and img:
+        if isinstance(img, list):
             for cand in img:
-                if isinstance(cand, str) and _is_valid_article_image(cand):
-                    return cand.strip()
-                if isinstance(cand, dict) and cand.get("url") and _is_valid_article_image(str(cand["url"])):
-                    return str(cand["url"]).strip()
+                cand_url = cand if isinstance(cand, str) else cand.get("url") if isinstance(cand, dict) else ""
+                if cand_url and _is_valid_article_image(str(cand_url)):
+                    return str(cand_url).strip()
         if isinstance(img, dict) and img.get("url") and _is_valid_article_image(str(img["url"])):
             return str(img["url"]).strip()
 
-    # 3. الاعتماد على Meta Tags فقط إذا كانت لا تحتوي على شعار الموقع
+    # 3. الاعتماد على Meta Tags بشرط ألا تكون الصورة العامة للموقع
     if val := first_meta(soup, "og:image", "twitter:image"):
         if _is_valid_article_image(val):
             return val
-
-    # 4. Fallback: أي صورة متواجدة داخل الصفحة وليست شعاراً
-    for img in soup.select("img"):
-        src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
-        if src and _is_valid_article_image(src):
-            return src.strip()
 
     return ""
 

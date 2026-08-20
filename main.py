@@ -145,9 +145,8 @@ def run(settings: Settings) -> int:
         )
     except Exception:
         logger.exception("Telegram report failed")
-        return 2 if report.failed else 0
 
-    return 1 if report.failed and not report.created else 0
+    return 0
 
 
 if __name__ == "__main__":

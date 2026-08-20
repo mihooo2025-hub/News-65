@@ -81,7 +81,26 @@ PROMPT_TEMPLATE = r"""
 class GeminiRewriter:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.api_keys = self._get_api_keys_list()
+        self.current_key_index = 0
+        self.client = genai.Client(api_key=self.api_keys[self.current_key_index])
+
+    def _get_api_keys_list(self) -> list[str]:
+        raw_keys = getattr(self.settings, "gemini_api_key", "") or ""
+        backup_key = getattr(self.settings, "gemini_api_key_backup", "") or ""
+        
+        keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+        if backup_key and backup_key.strip() not in keys:
+            keys.append(backup_key.strip())
+            
+        return keys if keys else [raw_keys]
+
+    def _switch_to_next_key(self):
+        if len(self.api_keys) > 1:
+            self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+            new_key = self.api_keys[self.current_key_index]
+            logger.info("Switching to API Key index %d", self.current_key_index)
+            self.client = genai.Client(api_key=new_key)
 
     def _get_models_list(self) -> list[str]:
         raw_model = self.settings.gemini_model or "gemini-2.5-flash"
@@ -104,40 +123,53 @@ class GeminiRewriter:
         response = None
         last_exception = None
 
-        for model_name in models:
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    logger.info("Attempting rewriting with model: %s (attempt %d/%d)", model_name, attempt + 1, max_retries)
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config={
-                            "temperature": 0.2,
-                            "max_output_tokens": 1800,
-                            "response_mime_type": "application/json",
-                            "response_json_schema": SCHEMA,
-                        },
-                    )
-                    if response and response.text:
-                        break
-                except Exception as exc:
-                    err_msg = str(exc)
-                    last_exception = exc
-                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        wait_time = 22 + (attempt * 5)
-                        logger.warning("Rate limit hit (429) on model %s. Retrying in %d seconds... Error: %s", model_name, wait_time, exc)
-                        time.sleep(wait_time)
-                    else:
-                        logger.warning("Model %s failed with non-rate-limit error: %s", model_name, exc)
-                        break
+        for key_attempt in range(len(self.api_keys)):
+            for model_name in models:
+                max_retries = 2
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(
+                            "Attempting rewriting | Model: %s | Key Index: %d | Attempt %d/%d", 
+                            model_name, self.current_key_index, attempt + 1, max_retries
+                        )
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config={
+                                "temperature": 0.2,
+                                "max_output_tokens": 1800,
+                                "response_mime_type": "application/json",
+                                "response_json_schema": SCHEMA,
+                            },
+                        )
+                        if response and response.text:
+                            break
+                    except Exception as exc:
+                        err_msg = str(exc)
+                        last_exception = exc
+                        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                            logger.warning("Rate limit (429) hit on Key %d with model %s.", self.current_key_index, model_name)
+                            # إذا كان هناك مفتاح آخر متاحة نقوم بالتبديل فوراً
+                            if len(self.api_keys) > 1 and key_attempt < len(self.api_keys) - 1:
+                                self._switch_to_next_key()
+                                break
+                            
+                            wait_time = 15 + (attempt * 5)
+                            logger.warning("Retrying in %d seconds...", wait_time)
+                            time.sleep(wait_time)
+                        else:
+                            logger.warning("Model %s failed with non-rate-limit error: %s", model_name, exc)
+                            break
+
+                if response and response.text:
+                    break
 
             if response and response.text:
                 break
 
         if not response or not response.text:
             if last_exception:
-                raise RuntimeError(f"Gemini generation failed on all models: {last_exception}")
+                raise RuntimeError(f"Gemini generation failed on all keys and models: {last_exception}")
             raise RuntimeError("Gemini returned an empty response")
 
         try:

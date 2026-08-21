@@ -1,17 +1,7 @@
 """
 scraper_365scores.py
 ====================
-Robust scraper for 365Scores Magazine.
-
-- Discovers article URLs from 365Scores.
-- Uses Playwright for dynamic rendering.
-- Extracts article body from:
-    1) JSON-LD articleBody
-    2) Next.js __NEXT_DATA__
-    3) Semantic article/content containers
-    4) Multiple paragraph/content selectors
-    5) Direct Playwright fallback
-- Uses smart waiting and a lightweight scroll before reload.
+Scraper for 365Scores Magazine using Playwright + BeautifulSoup.
 """
 
 from __future__ import annotations
@@ -44,658 +34,21 @@ USER_AGENT = (
     "Chrome/128.0.0.0 Safari/537.36"
 )
 
-DEFAULT_LOGO_PATTERNS = (
-    "site-logo",
-    "favicon",
-    "default-avatar",
-)
-
 ARTICLE_ROOT = "/ar/news/magazine"
 
 DEFAULT_FALLBACK_IMAGE_URL = (
     "https://nabdalmalaeb.com/wp-content/uploads/default-news.jpg"
 )
 
-MIN_ARTICLE_TEXT_LENGTH = 80
-MAX_WAIT_FOR_TEXT_MS = 12_000
-
-
-# ============================================================================
-# URL Helpers
-# ============================================================================
-
-def normalize_url(base_url: str, value: str) -> str:
-    if not value:
-        return ""
-
-    return (
-        urljoin(base_url, html.unescape(str(value)).strip())
-        .split("#", 1)[0]
-    )
-
-
-def news_index_url(source_url: str) -> str:
-    parsed = urlparse(source_url)
-
-    return (
-        f"{parsed.scheme}://{parsed.netloc}/ar/news/magazine/"
-        if parsed.path.rstrip("/") in {"", "/ar"}
-        else source_url
-    )
-
-
-def is_probable_article_url(url: str) -> bool:
-    if not url:
-        return False
-
-    try:
-        parsed = urlparse(url)
-        path = unquote(parsed.path).lower().rstrip("/")
-
-        if (
-            not path.startswith(ARTICLE_ROOT)
-            or parsed.scheme not in {"http", "https"}
-        ):
-            return False
-
-        if path == ARTICLE_ROOT:
-            return any(
-                re.fullmatch(r"\d+", pid or "")
-                for pid in parse_qs(parsed.query).get("p", [])
-            )
-
-        rel_path = path[len(ARTICLE_ROOT):].strip("/")
-
-        if not rel_path:
-            return False
-
-        if re.search(
-            r"^(category|tag|author|search|page/\d+)(/|$)",
-            rel_path,
-        ):
-            return False
-
-        slug = rel_path.split("/")[0]
-
-        ignored_keywords = (
-            "القنوات-الناقلة",
-            "إحصائيات",
-            "احصائيات",
-            "نادي-",
-            "منتخب-",
-            "فريق-",
-            "الأهداف-العكسية",
-            "بطاقة-حمراء",
-            "بطولات-",
-            "أكثر-منتخب",
-            "أقل-منتخب",
-            "أكثر-حارس",
-        )
-
-        if any(kw in slug for kw in ignored_keywords):
-            return False
-
-        return True
-
-    except Exception:
-        return False
-
-
-# ============================================================================
-# Time Parsing
-# ============================================================================
-
-def parse_relative_time(
-    text: str,
-    now: datetime,
-) -> datetime | None:
-
-    val = re.sub(
-        r"\s+",
-        " ",
-        text.strip().translate(ARABIC_DIGITS),
-    )
-
-    if "الآن" in val or "قبل 0 دقيقة" in val:
-        return now
-
-    units = [
-        ("دقيقة|دقائق", "minutes"),
-        ("ساعة|ساعات", "hours"),
-        ("يوم|أيام", "days"),
-    ]
-
-    for pattern, unit in units:
-
-        match = re.search(
-            rf"(?:قبل|منذ)\s+(\d+)\s*(?:{pattern})",
-            val,
-        )
-
-        if match:
-            return now - timedelta(
-                **{unit: int(match.group(1))}
-            )
-
-    return None
-
-
-def parse_absolute_time(text: str) -> datetime | None:
-
-    val = re.sub(
-        r"\s+",
-        " ",
-        text.strip().translate(ARABIC_DIGITS),
-    )
-
-    match = re.search(
-        r"(\d{1,2})/(\d{1,2})/(\d{4})"
-        r"\s*(?:-|–|—)?\s*"
-        r"(\d{1,2}):(\d{2})\s*([صم])",
-        val,
-    )
-
-    if match:
-        d, mth, year, hour, minute, meridiem = match.groups()
-
-        hour = int(hour)
-
-        if meridiem == "م" and hour < 12:
-            hour += 12
-
-        elif meridiem == "ص" and hour == 12:
-            hour = 0
-
-        try:
-            dt = datetime(
-                int(year),
-                int(mth),
-                int(d),
-                hour,
-                int(minute),
-                tzinfo=timezone(timedelta(hours=3)),
-            )
-
-            return dt.astimezone(timezone.utc)
-
-        except ValueError:
-            pass
-
-    match = re.search(
-        r"\b(20\d{2}-\d{2}-\d{2}T[^\s<]+)",
-        val,
-    )
-
-    if match:
-
-        try:
-            dt = datetime.fromisoformat(
-                match.group(1).replace(
-                    "Z",
-                    "+00:00",
-                )
-            )
-
-            return (
-                dt
-                if dt.tzinfo
-                else dt.replace(tzinfo=timezone.utc)
-            )
-
-        except ValueError:
-            pass
-
-    return None
-
-
-def parse_any_time(
-    text: str,
-    now: datetime,
-) -> datetime | None:
-
-    return (
-        parse_absolute_time(text)
-        or parse_relative_time(text, now)
-    )
-
-
-# ============================================================================
-# Metadata & JSON
-# ============================================================================
-
-def extract_json_ld(
-    soup: BeautifulSoup,
-) -> list[dict]:
-
-    items: list[dict] = []
-
-    def collect(data):
-
-        if isinstance(data, dict):
-
-            items.append(data)
-
-            graph = data.get("@graph")
-
-            if isinstance(graph, list):
-                for entry in graph:
-                    collect(entry)
-
-        elif isinstance(data, list):
-
-            for entry in data:
-                collect(entry)
-
-    for script in soup.select(
-        'script[type="application/ld+json"]'
-    ):
-
-        raw = script.string or script.get_text()
-
-        if not raw:
-            continue
-
-        try:
-            collect(json.loads(raw.strip()))
-        except Exception:
-            continue
-
-    return items
-
-
-def first_meta(
-    soup: BeautifulSoup,
-    *names: str,
-) -> str:
-
-    for name in names:
-
-        tag = (
-            soup.find(
-                "meta",
-                attrs={"property": name},
-            )
-            or soup.find(
-                "meta",
-                attrs={"name": name},
-            )
-        )
-
-        if tag and tag.get("content"):
-            return tag["content"].strip()
-
-    return ""
-
-
-# ============================================================================
-# Image Extraction
-# ============================================================================
-
-def _is_valid_image(url: str) -> bool:
-
-    if not url:
-        return False
-
-    lower = url.lower().strip()
-
-    if lower.startswith(
-        (
-            "data:",
-            "blob:",
-            "javascript:",
-        )
-    ):
-        return False
-
-    if any(
-        pattern in lower
-        for pattern in DEFAULT_LOGO_PATTERNS
-    ):
-        return False
-
-    if lower.endswith(".svg"):
-        return False
-
-    return True
-
-
-def extract_featured_image(
-    soup: BeautifulSoup,
-) -> str:
-
-    meta = first_meta(
-        soup,
-        "og:image",
-        "twitter:image",
-        "og:image:secure_url",
-        "image",
-    )
-
-    if _is_valid_image(meta):
-
-        if meta.startswith("//"):
-            meta = "https:" + meta
-
-        return meta
-
-    for item in extract_json_ld(soup):
-
-        for key in (
-            "image",
-            "primaryImageOfPage",
-            "thumbnailUrl",
-        ):
-
-            value = item.get(key)
-
-            if isinstance(value, list):
-                value = (
-                    value[0]
-                    if value
-                    else ""
-                )
-
-            if isinstance(value, dict):
-                value = value.get("url", "")
-
-            if isinstance(value, str) and _is_valid_image(value):
-
-                value = value.strip()
-
-                if value.startswith("//"):
-                    value = "https:" + value
-
-                return value
-
-    for img in soup.select(
-        "article img, main img, figure img, img"
-    ):
-
-        src = (
-            img.get("src")
-            or img.get("data-src")
-            or img.get("data-lazy-src")
-            or img.get("data-original")
-        )
-
-        if not src and img.get("srcset"):
-
-            candidates = [
-                part.strip().split()[0]
-                for part in img.get("srcset", "").split(",")
-                if part.strip()
-            ]
-
-            if candidates:
-                src = candidates[-1]
-
-        if src and _is_valid_image(src):
-
-            src = src.strip()
-
-            if src.startswith("//"):
-                src = "https:" + src
-
-            return src
-
-    return ""
-
-
-# ============================================================================
-# Published Time
-# ============================================================================
-
-def extract_published_at(
-    soup: BeautifulSoup,
-) -> datetime | None:
-
-    now = datetime.now(timezone.utc)
-
-    for key in (
-        "article:published_time",
-        "datePublished",
-        "publish_date",
-    ):
-
-        value = first_meta(soup, key)
-
-        if value:
-
-            dt = parse_any_time(
-                value,
-                now,
-            )
-
-            if dt:
-                return dt
-
-    for time_tag in soup.select(
-        "time[datetime]"
-    ):
-
-        dt = parse_any_time(
-            time_tag.get("datetime", ""),
-            now,
-        )
-
-        if dt:
-            return dt
-
-    for item in extract_json_ld(soup):
-
-        value = (
-            item.get("datePublished")
-            or item.get("dateCreated")
-        )
-
-        if isinstance(value, str):
-
-            dt = parse_any_time(
-                value,
-                now,
-            )
-
-            if dt:
-                return dt
-
-    return None
-
-
-# ============================================================================
-# Text Cleaning
-# ============================================================================
-
-def clean_text(text: str) -> str:
-
-    if not text:
-        return ""
-
-    text = html.unescape(text)
-
-    text = text.replace(
-        "\u200f",
-        "",
-    ).replace(
-        "\u200e",
-        "",
-    )
-
-    text = re.sub(
-        r"[ \t]+",
-        " ",
-        text,
-    )
-
-    text = re.sub(
-        r"\n{3,}",
-        "\n\n",
-        text,
-    )
-
-    return text.strip()
-
-
-def normalize_paragraph(
-    text: str,
-) -> str:
-
-    return clean_text(
-        re.sub(
-            r"\s+",
-            " ",
-            text,
-        )
-    )
-
-
-# ============================================================================
-# Next.js Data Extraction
-# ============================================================================
-
-def extract_next_data(
-    soup: BeautifulSoup,
-) -> dict:
-
-    script = soup.find(
-        "script",
-        id="__NEXT_DATA__",
-    )
-
-    if not script:
-        return {}
-
-    raw = script.string or script.get_text()
-
-    if not raw:
-        return {}
-
-    try:
-        data = json.loads(raw.strip())
-
-        return (
-            data
-            if isinstance(data, dict)
-            else {}
-        )
-
-    except Exception:
-        return {}
-
-
-def _find_text_values(
-    value,
-    results: list[str],
-    depth: int = 0,
-) -> None:
-
-    if depth > 10:
-        return
-
-    if isinstance(value, dict):
-
-        for key, child in value.items():
-
-            key_lower = str(key).lower()
-
-            if key_lower in {
-                "articlebody",
-                "article_body",
-                "body",
-                "content",
-                "articlecontent",
-                "article_content",
-            }:
-
-                if isinstance(child, str):
-
-                    text = normalize_paragraph(
-                        child
-                    )
-
-                    if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
-                        results.append(text)
-
-            _find_text_values(
-                child,
-                results,
-                depth + 1,
-            )
-
-    elif isinstance(value, list):
-
-        for child in value:
-            _find_text_values(
-                child,
-                results,
-                depth + 1,
-            )
-
-
-def extract_text_from_next_data(
-    soup: BeautifulSoup,
-) -> str:
-
-    data = extract_next_data(soup)
-
-    if not data:
-        return ""
-
-    candidates: list[str] = []
-
-    _find_text_values(
-        data,
-        candidates,
-    )
-
-    if not candidates:
-        return ""
-
-    candidates = sorted(
-        set(candidates),
-        key=len,
-        reverse=True,
-    )
-
-    return candidates[0]
-
-
-# ============================================================================
-# JSON-LD Article Text
-# ============================================================================
-
-def extract_text_from_json_ld(
-    soup: BeautifulSoup,
-) -> str:
-
-    candidates: list[str] = []
-
-    for item in extract_json_ld(soup):
-
-        body = item.get("articleBody")
-
-        if isinstance(body, str):
-
-            body = clean_text(body)
-
-            if len(body) >= MIN_ARTICLE_TEXT_LENGTH:
-                candidates.append(body)
-
-    if not candidates:
-        return ""
-
-    return max(
-        candidates,
-        key=len,
-    )
-
-
-# ============================================================================
-# DOM Article Text Extraction
-# ============================================================================
-
-# Ordered from the most specific article containers
-# to broader containers.
-CONTENT_ROOT_SELECTORS = (
+LOGO_PATTERNS = (
+    "site-logo",
+    "favicon",
+    "default-avatar",
+)
+
+MIN_TEXT = 80
+
+CONTENT_SELECTORS = (
     "[class*='article-body']",
     "[class*='articleBody']",
     "[class*='article-content']",
@@ -718,368 +71,598 @@ CONTENT_ROOT_SELECTORS = (
 )
 
 
-PARAGRAPH_SELECTORS = (
-    "article p",
-    "main article p",
-    "main p",
-    "[class*='article-body'] p",
-    "[class*='article-content'] p",
-    "[class*='articleContent'] p",
-    "[class*='post-content'] p",
-    "[class*='postContent'] p",
-    "[class*='entry-content'] p",
-    "[class*='story-content'] p",
-    "[class*='storyContent'] p",
-    "[class*='content-body'] p",
-    "[class*='contentBody'] p",
-    "[class*='news-content'] p",
-    "[class*='newsContent'] p",
-    "[class*='magazine-content'] p",
-    "[class*='magazineContent'] p",
-    "div[class*='text'] p",
-    "p",
-)
+# ============================================================================
+# Helpers
+# ============================================================================
+
+def normalize_url(base: str, value: str) -> str:
+    if not value:
+        return ""
+
+    return urljoin(
+        base,
+        html.unescape(str(value)).strip(),
+    ).split("#", 1)[0]
 
 
-def _remove_noise(
-    root: BeautifulSoup,
-) -> None:
+def news_index_url(url: str) -> str:
+    parsed = urlparse(url)
 
-    for tag in root.select(
-        "script, style, noscript, nav, header, footer, aside"
-    ):
-        tag.decompose()
+    if parsed.path.rstrip("/") in {"", "/ar"}:
+        return (
+            f"{parsed.scheme}://{parsed.netloc}"
+            "/ar/news/magazine/"
+        )
 
-    for tag in root.select(
-        "[class*='share'], "
-        "[class*='social'], "
-        "[class*='related'], "
-        "[class*='comment'], "
-        "[class*='advert'], "
-        "[class*='ads'], "
-        "[id*='share'], "
-        "[id*='social'], "
-        "[id*='related'], "
-        "[id*='comment'], "
-        "[id*='advert']"
-    ):
-        tag.decompose()
+    return url
 
 
-def _extract_paragraphs_from_root(
-    root,
-) -> str:
+def clean_text(text: str) -> str:
+    if not text:
+        return ""
 
-    paragraphs: list[str] = []
-    seen: set[str] = set()
+    text = html.unescape(text)
+    text = text.replace("\u200f", "").replace("\u200e", "")
+    text = re.sub(r"\s+", " ", text)
 
-    for selector in PARAGRAPH_SELECTORS:
+    return text.strip()
 
-        try:
-            nodes = root.select(selector)
-        except Exception:
-            continue
 
-        for node in nodes:
+def valid_image(url: str) -> bool:
+    if not url:
+        return False
 
-            text = normalize_paragraph(
-                node.get_text(
-                    " ",
-                    strip=True,
-                )
+    value = url.lower().strip()
+
+    return not (
+        value.startswith(
+            ("data:", "blob:", "javascript:")
+        )
+        or value.endswith(".svg")
+        or any(x in value for x in LOGO_PATTERNS)
+    )
+
+
+# ============================================================================
+# URL Filtering
+# ============================================================================
+
+def is_probable_article_url(url: str) -> bool:
+    if not url:
+        return False
+
+    try:
+        parsed = urlparse(url)
+        path = unquote(parsed.path).lower().rstrip("/")
+
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not path.startswith(ARTICLE_ROOT)
+        ):
+            return False
+
+        if path == ARTICLE_ROOT:
+            return any(
+                re.fullmatch(r"\d+", x or "")
+                for x in parse_qs(parsed.query).get("p", [])
             )
 
-            if len(text) <= 10:
-                continue
+        rel = path[len(ARTICLE_ROOT):].strip("/")
 
-            if text in {
-                "مشاركة",
-                "إعلان",
-                "التعليقات",
-                "تابعنا",
-                "إقرأ المزيد",
-                "اقرأ المزيد",
-            }:
-                continue
+        if not rel:
+            return False
 
-            if text in seen:
-                continue
+        if re.search(
+            r"^(category|tag|author|search|page/\d+)(/|$)",
+            rel,
+        ):
+            return False
 
-            seen.add(text)
-            paragraphs.append(text)
+        slug = rel.split("/")[0]
 
-    return "\n".join(
-        paragraphs
-    ).strip()
+        ignored = (
+            "القنوات-الناقلة",
+            "إحصائيات",
+            "احصائيات",
+            "نادي-",
+            "منتخب-",
+            "فريق-",
+            "الأهداف-العكسية",
+            "بطاقة-حمراء",
+            "بطولات-",
+            "أكثر-منتخب",
+            "أقل-منتخب",
+            "أكثر-حارس",
+        )
+
+        return not any(x in slug for x in ignored)
+
+    except Exception:
+        return False
 
 
-def _extract_best_container_text(
-    soup: BeautifulSoup,
-) -> str:
-    """
-    Try specific article containers first.
+# ============================================================================
+# Time
+# ============================================================================
 
-    A specific article container is preferred over a generic
-    main container, even if another container happens to contain
-    more characters.
-    """
+def parse_time(text: str, now: datetime) -> datetime | None:
+    value = re.sub(
+        r"\s+",
+        " ",
+        text.strip().translate(ARABIC_DIGITS),
+    )
 
-    for selector in CONTENT_ROOT_SELECTORS:
+    if "الآن" in value or "قبل 0 دقيقة" in value:
+        return now
+
+    for pattern, unit in (
+        ("دقيقة|دقائق", "minutes"),
+        ("ساعة|ساعات", "hours"),
+        ("يوم|أيام", "days"),
+    ):
+        match = re.search(
+            rf"(?:قبل|منذ)\s+(\d+)\s*(?:{pattern})",
+            value,
+        )
+
+        if match:
+            return now - timedelta(
+                **{unit: int(match.group(1))}
+            )
+
+    match = re.search(
+        r"(\d{1,2})/(\d{1,2})/(\d{4})"
+        r"\s*(?:-|–|—)?\s*"
+        r"(\d{1,2}):(\d{2})\s*([صم])",
+        value,
+    )
+
+    if match:
+        d, m, y, h, minute, meridiem = match.groups()
+
+        h = int(h)
+
+        if meridiem == "م" and h < 12:
+            h += 12
+        elif meridiem == "ص" and h == 12:
+            h = 0
 
         try:
-            nodes = soup.select(selector)
-        except Exception:
+            return datetime(
+                int(y),
+                int(m),
+                int(d),
+                h,
+                int(minute),
+                tzinfo=timezone(timedelta(hours=3)),
+            ).astimezone(timezone.utc)
+
+        except ValueError:
+            pass
+
+    match = re.search(
+        r"\b20\d{2}-\d{2}-\d{2}T[^\s<]+",
+        value,
+    )
+
+    if match:
+        try:
+            dt = datetime.fromisoformat(
+                match.group(0).replace("Z", "+00:00")
+            )
+
+            return (
+                dt
+                if dt.tzinfo
+                else dt.replace(tzinfo=timezone.utc)
+            )
+
+        except ValueError:
+            pass
+
+    return None
+
+
+# ============================================================================
+# Metadata
+# ============================================================================
+
+def first_meta(
+    soup: BeautifulSoup,
+    *names: str,
+) -> str:
+
+    for name in names:
+        tag = (
+            soup.find("meta", property=name)
+            or soup.find("meta", attrs={"name": name})
+        )
+
+        if tag and tag.get("content"):
+            return tag["content"].strip()
+
+    return ""
+
+
+def json_ld(soup: BeautifulSoup) -> list[dict]:
+    result = []
+
+    def collect(value):
+        if isinstance(value, dict):
+            result.append(value)
+
+            if isinstance(value.get("@graph"), list):
+                for item in value["@graph"]:
+                    collect(item)
+
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    for script in soup.select(
+        'script[type="application/ld+json"]'
+    ):
+        raw = script.string or script.get_text()
+
+        if not raw:
             continue
 
-        selector_candidates = []
+        try:
+            collect(json.loads(raw))
+        except Exception:
+            pass
 
-        for node in nodes:
+    return result
+
+
+# ============================================================================
+# Image
+# ============================================================================
+
+def extract_featured_image(
+    soup: BeautifulSoup,
+) -> str:
+
+    image = first_meta(
+        soup,
+        "og:image",
+        "twitter:image",
+        "og:image:secure_url",
+        "image",
+    )
+
+    if valid_image(image):
+        return (
+            "https:" + image
+            if image.startswith("//")
+            else image
+        )
+
+    for item in json_ld(soup):
+
+        for key in (
+            "image",
+            "primaryImageOfPage",
+            "thumbnailUrl",
+        ):
+            value = item.get(key)
+
+            if isinstance(value, list):
+                value = value[0] if value else ""
+
+            if isinstance(value, dict):
+                value = value.get("url", "")
+
+            if isinstance(value, str) and valid_image(value):
+                return (
+                    "https:" + value
+                    if value.startswith("//")
+                    else value.strip()
+                )
+
+    for img in soup.select(
+        "article img, main img, figure img, img"
+    ):
+
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-lazy-src")
+            or img.get("data-original")
+        )
+
+        if not src and img.get("srcset"):
+            src = img["srcset"].split(",")[-1].strip().split()[0]
+
+        if valid_image(src):
+            return (
+                "https:" + src
+                if src.startswith("//")
+                else src.strip()
+            )
+
+    return ""
+
+
+# ============================================================================
+# Published Date
+# ============================================================================
+
+def extract_published_at(
+    soup: BeautifulSoup,
+) -> datetime | None:
+
+    now = datetime.now(timezone.utc)
+
+    for key in (
+        "article:published_time",
+        "datePublished",
+        "publish_date",
+    ):
+        value = first_meta(soup, key)
+
+        if value and (dt := parse_time(value, now)):
+            return dt
+
+    for tag in soup.select("time[datetime]"):
+        if dt := parse_time(
+            tag.get("datetime", ""),
+            now,
+        ):
+            return dt
+
+    for item in json_ld(soup):
+        value = (
+            item.get("datePublished")
+            or item.get("dateCreated")
+        )
+
+        if isinstance(value, str):
+            if dt := parse_time(value, now):
+                return dt
+
+    return None
+
+
+# ============================================================================
+# Article Text
+# ============================================================================
+
+def extract_next_data(
+    soup: BeautifulSoup,
+) -> dict:
+
+    script = soup.find(
+        "script",
+        id="__NEXT_DATA__",
+    )
+
+    if not script:
+        return {}
+
+    try:
+        data = json.loads(
+            script.string or script.get_text()
+        )
+
+        return data if isinstance(data, dict) else {}
+
+    except Exception:
+        return {}
+
+
+def find_next_text(
+    value,
+    results: list[str],
+    depth: int = 0,
+) -> None:
+
+    if depth > 10:
+        return
+
+    if isinstance(value, dict):
+
+        for key, child in value.items():
+
+            if str(key).lower() in {
+                "articlebody",
+                "article_body",
+                "body",
+                "content",
+                "articlecontent",
+                "article_content",
+            }:
+                if isinstance(child, str):
+                    text = clean_text(child)
+
+                    if len(text) >= MIN_TEXT:
+                        results.append(text)
+
+            find_next_text(
+                child,
+                results,
+                depth + 1,
+            )
+
+    elif isinstance(value, list):
+
+        for child in value:
+            find_next_text(
+                child,
+                results,
+                depth + 1,
+            )
+
+
+def extract_article_text(
+    soup: BeautifulSoup,
+) -> str:
+
+    # 1. JSON-LD
+    candidates = [
+        clean_text(item["articleBody"])
+        for item in json_ld(soup)
+        if isinstance(item.get("articleBody"), str)
+        and len(clean_text(item["articleBody"])) >= MIN_TEXT
+    ]
+
+    if candidates:
+        return max(candidates, key=len)
+
+    # 2. Next.js
+    next_candidates = []
+
+    find_next_text(
+        extract_next_data(soup),
+        next_candidates,
+    )
+
+    if next_candidates:
+        return max(next_candidates, key=len)
+
+    # 3. Specific article containers
+    for selector in CONTENT_SELECTORS:
+
+        found = []
+
+        for node in soup.select(selector):
 
             clone = BeautifulSoup(
                 str(node),
                 "html.parser",
             )
 
-            _remove_noise(clone)
+            for tag in clone.select(
+                "script,style,noscript,nav,header,footer,aside,"
+                "[class*='share'],[class*='social'],"
+                "[class*='related'],[class*='comment'],"
+                "[class*='advert'],[class*='ads']"
+            ):
+                tag.decompose()
 
-            paragraph_text = (
-                _extract_paragraphs_from_root(
-                    clone
-                )
-            )
+            paragraphs = []
+            seen = set()
 
-            if len(paragraph_text) >= MIN_ARTICLE_TEXT_LENGTH:
-                selector_candidates.append(
-                    paragraph_text
-                )
+            for p in clone.select("p"):
 
-            raw_text = normalize_paragraph(
-                clone.get_text(
-                    "\n",
-                    strip=True,
-                )
-            )
-
-            if len(raw_text) >= MIN_ARTICLE_TEXT_LENGTH:
-                selector_candidates.append(
-                    raw_text
+                text = clean_text(
+                    p.get_text(" ", strip=True)
                 )
 
-        if selector_candidates:
+                if (
+                    len(text) > 10
+                    and text not in seen
+                    and text not in {
+                        "مشاركة",
+                        "إعلان",
+                        "التعليقات",
+                        "تابعنا",
+                        "إقرأ المزيد",
+                        "اقرأ المزيد",
+                    }
+                ):
+                    seen.add(text)
+                    paragraphs.append(text)
 
-            # Within the same selector, use the
-            # longest coherent result.
-            return max(
-                selector_candidates,
-                key=len,
-            )
+            text = "\n".join(paragraphs).strip()
 
-    return ""
+            if len(text) >= MIN_TEXT:
+                found.append(text)
 
+        if found:
+            return max(found, key=len)
 
-def extract_article_text(
-    soup: BeautifulSoup,
-) -> str:
-    """
-    Multi-layer article text extraction.
-
-    Priority:
-        1) JSON-LD articleBody
-        2) Next.js article/body/content
-        3) Specific article containers
-        4) Generic paragraph extraction
-    """
-
-    # ------------------------------------------------------------------
-    # 1. JSON-LD
-    # ------------------------------------------------------------------
-
-    text = extract_text_from_json_ld(
-        soup
-    )
-
-    if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
-        return text
-
-    # ------------------------------------------------------------------
-    # 2. Next.js
-    # ------------------------------------------------------------------
-
-    text = extract_text_from_next_data(
-        soup
-    )
-
-    if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
-        return text
-
-    # ------------------------------------------------------------------
-    # 3. Specific DOM containers
-    # ------------------------------------------------------------------
-
-    text = _extract_best_container_text(
-        soup
-    )
-
-    if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
-        return text
-
-    # ------------------------------------------------------------------
     # 4. Generic paragraphs
-    # ------------------------------------------------------------------
-
-    soup_copy = BeautifulSoup(
+    clone = BeautifulSoup(
         str(soup),
         "html.parser",
     )
 
-    _remove_noise(
-        soup_copy
-    )
+    for tag in clone.select(
+        "script,style,noscript,nav,header,footer,aside"
+    ):
+        tag.decompose()
 
     paragraphs = []
     seen = set()
 
-    for p in soup_copy.select("p"):
+    for p in clone.select("p"):
 
-        txt = normalize_paragraph(
-            p.get_text(
-                " ",
-                strip=True,
-            )
+        text = clean_text(
+            p.get_text(" ", strip=True)
         )
 
-        if len(txt) <= 10:
-            continue
+        if len(text) > 10 and text not in seen:
+            seen.add(text)
+            paragraphs.append(text)
 
-        if txt in seen:
-            continue
-
-        if txt in {
-            "مشاركة",
-            "إعلان",
-            "التعليقات",
-            "تابعنا",
-            "إقرأ المزيد",
-            "اقرأ المزيد",
-        }:
-            continue
-
-        seen.add(txt)
-        paragraphs.append(txt)
-
-    return "\n".join(
-        paragraphs
-    ).strip()
+    return "\n".join(paragraphs).strip()
 
 
 # ============================================================================
 # Playwright Fallback
 # ============================================================================
 
-async def extract_playwright_fallbacks(
+async def playwright_extract(
     page: Page,
 ) -> tuple[str, str]:
 
     try:
 
-        data = await page.evaluate(
+        return await page.evaluate(
             """
             () => {
 
-                const normalize = (value) => {
-
-                    if (!value) {
-                        return '';
-                    }
-
-                    return value
+                const clean = value =>
+                    (value || '')
                         .replace(/\\s+/g, ' ')
                         .trim();
-                };
 
-                const isValidImage = (url) => {
+                const validImage = url => {
 
-                    if (!url) {
-                        return false;
-                    }
+                    if (!url) return false;
 
-                    const lower =
-                        url.toLowerCase();
+                    const x = url.toLowerCase();
 
-                    if (
-                        lower.startsWith('data:') ||
-                        lower.startsWith('blob:') ||
-                        lower.startsWith('javascript:')
-                    ) {
-                        return false;
-                    }
-
-                    if (lower.endsWith('.svg')) {
-                        return false;
-                    }
-
-                    if (
-                        lower.includes('site-logo') ||
-                        lower.includes('favicon') ||
-                        lower.includes('default-avatar')
-                    ) {
-                        return false;
-                    }
-
-                    return true;
+                    return !(
+                        x.startsWith('data:') ||
+                        x.startsWith('blob:') ||
+                        x.startsWith('javascript:') ||
+                        x.endsWith('.svg') ||
+                        x.includes('site-logo') ||
+                        x.includes('favicon') ||
+                        x.includes('default-avatar')
+                    );
                 };
 
                 let image = '';
 
-                const imageSelectors = [
-                    'article img',
-                    'main article img',
-                    'main img',
-                    'figure img',
-                    'img'
-                ];
-
                 for (
-                    const selector
-                    of imageSelectors
+                    const el of document.querySelectorAll(
+                        'article img, main img, figure img, img'
+                    )
                 ) {
 
-                    const elements =
-                        document.querySelectorAll(
-                            selector
-                        );
+                    let src =
+                        el.currentSrc ||
+                        el.src ||
+                        el.getAttribute('src') ||
+                        el.getAttribute('data-src') ||
+                        el.getAttribute('data-lazy-src') ||
+                        el.getAttribute('data-original');
 
-                    for (
-                        const el
-                        of elements
-                    ) {
+                    if (validImage(src)) {
 
-                        let src =
-                            el.currentSrc ||
-                            el.src ||
-                            el.getAttribute('src') ||
-                            el.getAttribute('data-src') ||
-                            el.getAttribute('data-lazy-src') ||
-                            el.getAttribute('data-original');
-
-                        if (isValidImage(src)) {
-
-                            if (
-                                src.startsWith('//')
-                            ) {
-                                src =
-                                    'https:' + src;
-                            }
-
-                            image = src;
-                            break;
+                        if (src.startsWith('//')) {
+                            src = 'https:' + src;
                         }
-                    }
 
-                    if (image) {
+                        image = src;
                         break;
                     }
                 }
+
+                let text = '';
 
                 const roots = [
                     '[class*="article-body"]',
@@ -1088,76 +671,47 @@ async def extract_playwright_fallbacks(
                     '[class*="articleContent"]',
                     '[class*="post-content"]',
                     '[class*="postContent"]',
-                    '[class*="entry-content"]',
-                    '[class*="entryContent"]',
                     '[class*="content-body"]',
                     '[class*="contentBody"]',
-                    '[class*="news-content"]',
-                    '[class*="newsContent"]',
                     'article',
                     'main article',
                     'main'
                 ];
 
-                let text = '';
-
-                for (
-                    const selector
-                    of roots
-                ) {
-
-                    const nodes =
-                        document.querySelectorAll(
-                            selector
-                        );
+                for (const selector of roots) {
 
                     for (
-                        const node
-                        of nodes
+                        const root of
+                        document.querySelectorAll(selector)
                     ) {
-
-                        const paragraphs =
-                            node.querySelectorAll(
-                                'p'
-                            );
 
                         const parts = [];
 
                         for (
-                            const p
-                            of paragraphs
+                            const p of
+                            root.querySelectorAll('p')
                         ) {
 
                             const value =
-                                normalize(
-                                    p.innerText || ''
-                                );
+                                clean(p.innerText);
 
-                            if (
-                                value.length > 10
-                            ) {
+                            if (value.length > 10) {
                                 parts.push(value);
                             }
                         }
 
-                        const paragraphText =
+                        const paragraphs =
                             parts.join('\\n');
 
-                        if (
-                            paragraphText.length >= 80
-                        ) {
-                            text = paragraphText;
+                        if (paragraphs.length >= 80) {
+                            text = paragraphs;
                             break;
                         }
 
                         const raw =
-                            normalize(
-                                node.innerText || ''
-                            );
+                            clean(root.innerText);
 
-                        if (
-                            raw.length >= 80
-                        ) {
+                        if (raw.length >= 80) {
                             text = raw;
                             break;
                         }
@@ -1168,34 +722,24 @@ async def extract_playwright_fallbacks(
                     }
                 }
 
-                // Generic paragraph fallback.
                 if (text.length < 80) {
 
                     const parts = [];
 
                     for (
-                        const p
-                        of document.querySelectorAll(
-                            'p'
-                        )
+                        const p of
+                        document.querySelectorAll('p')
                     ) {
 
                         const value =
-                            normalize(
-                                p.innerText || ''
-                            );
+                            clean(p.innerText);
 
-                        if (
-                            value.length > 10
-                        ) {
+                        if (value.length > 10) {
                             parts.push(value);
                         }
                     }
 
-                    if (parts.length) {
-                        text =
-                            parts.join('\\n');
-                    }
+                    text = parts.join('\\n');
                 }
 
                 return {
@@ -1206,22 +750,17 @@ async def extract_playwright_fallbacks(
             """
         )
 
-        return (
-            data.get("image", ""),
-            data.get("text", ""),
-        )
-
     except Exception:
         return "", ""
 
 
 # ============================================================================
-# Smart Waiting
+# Waiting
 # ============================================================================
 
-async def wait_for_article_content(
+async def wait_for_content(
     page: Page,
-    timeout_ms: int = MAX_WAIT_FOR_TEXT_MS,
+    timeout: int = 12_000,
 ) -> None:
 
     try:
@@ -1237,34 +776,22 @@ async def wait_for_article_content(
                     '[class*="article-content"] p',
                     '[class*="articleContent"] p',
                     '[class*="post-content"] p',
-                    '[class*="postContent"] p',
-                    '[class*="entry-content"] p',
                     '[class*="content-body"] p',
                     '[class*="contentBody"] p',
                     'main p'
                 ];
 
-                for (
-                    const selector
-                    of selectors
-                ) {
-
-                    const elements =
-                        document.querySelectorAll(
-                            selector
-                        );
+                for (const selector of selectors) {
 
                     let total = 0;
 
                     for (
-                        const element
-                        of elements
+                        const el of
+                        document.querySelectorAll(selector)
                     ) {
 
                         const text =
-                            (
-                                element.innerText || ''
-                            ).trim();
+                            (el.innerText || '').trim();
 
                         if (text.length > 10) {
                             total += text.length;
@@ -1276,82 +803,50 @@ async def wait_for_article_content(
                     }
                 }
 
-                const next =
-                    document.querySelector(
-                        '#__NEXT_DATA__'
-                    );
-
-                if (
-                    next &&
-                    next.textContent &&
-                    next.textContent.length > 500
-                ) {
-                    return true;
-                }
-
                 return false;
             }
             """,
-            timeout=timeout_ms,
+            timeout=timeout,
         )
 
     except Exception:
         pass
 
 
-async def wait_for_stable_content(
-    page: Page,
-) -> None:
+async def wait_stable(page: Page) -> None:
 
-    previous_length = 0
-    stable_count = 0
+    previous = 0
+    stable = 0
 
-    for _ in range(8):
+    for _ in range(7):
 
         try:
 
-            current_length = await page.evaluate(
+            current = await page.evaluate(
                 """
                 () => {
-
-                    const selectors = [
-                        '[class*="article-body"]',
-                        '[class*="article-content"]',
-                        '[class*="articleContent"]',
-                        '[class*="post-content"]',
-                        '[class*="postContent"]',
-                        '[class*="content-body"]',
-                        '[class*="contentBody"]',
-                        'article',
-                        'main article',
-                        'main'
-                    ];
 
                     let best = 0;
 
                     for (
-                        const selector
-                        of selectors
+                        const selector of [
+                            '[class*="article-body"]',
+                            '[class*="article-content"]',
+                            'article',
+                            'main article',
+                            'main'
+                        ]
                     ) {
 
-                        const elements =
-                            document.querySelectorAll(
-                                selector
-                            );
-
                         for (
-                            const el
-                            of elements
+                            const el of
+                            document.querySelectorAll(selector)
                         ) {
 
-                            const value =
-                                (
-                                    el.innerText || ''
-                                ).trim().length;
-
-                            if (value > best) {
-                                best = value;
-                            }
+                            best = Math.max(
+                                best,
+                                (el.innerText || '').trim().length
+                            );
                         }
                     }
 
@@ -1360,29 +855,24 @@ async def wait_for_stable_content(
                 """
             )
 
-            if (
-                current_length ==
-                previous_length
-            ):
-                stable_count += 1
+            if current == previous:
+                stable += 1;
             else:
-                stable_count = 0
+                stable = 0
 
-            previous_length = current_length
+            previous = current
 
-            if stable_count >= 2:
-                break
+            if stable >= 2:
+                return
 
-            await page.wait_for_timeout(
-                350
-            )
+            await page.wait_for_timeout(350)
 
         except Exception:
-            break
+            return
 
 
 # ============================================================================
-# Article Fetching
+# Fetch Article
 # ============================================================================
 
 async def fetch_article(
@@ -1402,33 +892,15 @@ async def fetch_article(
                 timeout=30_000,
             )
 
-            # Allow React / Next.js to mount.
-            await page.wait_for_timeout(
-                700
-            )
+            await page.wait_for_timeout(700)
 
-            # Wait for actual article content.
-            await wait_for_article_content(
-                page
-            )
-
-            # Allow dynamic content to settle.
-            await wait_for_stable_content(
-                page
-            )
-
-            html_content = await page.content()
+            await wait_for_content(page)
+            await wait_stable(page)
 
             soup = BeautifulSoup(
-                html_content,
+                await page.content(),
                 "html.parser",
             )
-
-            # ----------------------------------------------------------
-            # Title
-            # ----------------------------------------------------------
-
-            h1 = soup.find("h1")
 
             title = (
                 first_meta(
@@ -1437,195 +909,109 @@ async def fetch_article(
                     "twitter:title",
                 )
                 or (
-                    h1.get_text(
-                        strip=True
-                    )
-                    if h1
+                    soup.find("h1").get_text(strip=True)
+                    if soup.find("h1")
                     else summary.title
                 )
             )
 
-            # ----------------------------------------------------------
-            # Image
-            # ----------------------------------------------------------
+            image = extract_featured_image(soup)
+            text = extract_article_text(soup)
 
-            image_url = extract_featured_image(
-                soup
+            pw_image, pw_text = (
+                await playwright_extract(page)
             )
 
+            if not image:
+                image = pw_image
+
+            if len(pw_text) > len(text):
+                text = pw_text
+
+            text = clean_text(text)
+
             # ----------------------------------------------------------
-            # Article text
+            # Recovery 1: lightweight scroll
             # ----------------------------------------------------------
 
-            article_text = extract_article_text(
-                soup
-            )
+            if len(text) < MIN_TEXT and attempt == 0:
 
-            # ----------------------------------------------------------
-            # Playwright fallback
-            # ----------------------------------------------------------
+                try:
+                    await page.evaluate(
+                        """
+                        () => window.scrollTo(
+                            0,
+                            document.body.scrollHeight * 0.6
+                        )
+                        """
+                    )
+                except Exception:
+                    pass
 
-            pw_img, pw_text = (
-                await extract_playwright_fallbacks(
-                    page
+                await page.wait_for_timeout(1000)
+                await wait_for_content(page, 5_000)
+                await wait_stable(page)
+
+                soup = BeautifulSoup(
+                    await page.content(),
+                    "html.parser",
                 )
-            )
 
-            if not image_url and pw_img:
-                image_url = pw_img
+                text = extract_article_text(soup)
 
-            if len(pw_text) > len(article_text):
-                article_text = pw_text
+                pw_image, pw_text = (
+                    await playwright_extract(page)
+                )
 
-            article_text = clean_text(
-                article_text
-            )
+                if not image:
+                    image = pw_image
 
-            # ----------------------------------------------------------
-            # First recovery attempt:
-            # lightweight scroll
-            # ----------------------------------------------------------
+                if len(pw_text) > len(text):
+                    text = pw_text
 
-            if len(article_text) < MIN_ARTICLE_TEXT_LENGTH:
-
-                if attempt == 0:
-
-                    try:
-
-                        await page.evaluate(
-                            """
-                            () => {
-                                window.scrollTo({
-                                    top:
-                                        document.body
-                                            .scrollHeight * 0.6,
-                                    behavior: 'instant'
-                                });
-                            }
-                            """
-                        )
-
-                    except Exception:
-                        pass
-
-                    await page.wait_for_timeout(
-                        1000
-                    )
-
-                    await wait_for_article_content(
-                        page,
-                        timeout_ms=5_000,
-                    )
-
-                    await wait_for_stable_content(
-                        page
-                    )
-
-                    # Re-extract after scroll.
-                    html_content = (
-                        await page.content()
-                    )
-
-                    soup = BeautifulSoup(
-                        html_content,
-                        "html.parser",
-                    )
-
-                    article_text = (
-                        extract_article_text(
-                            soup
-                        )
-                    )
-
-                    pw_img, pw_text = (
-                        await extract_playwright_fallbacks(
-                            page
-                        )
-                    )
-
-                    if (
-                        not image_url
-                        and pw_img
-                    ):
-                        image_url = pw_img
-
-                    if len(pw_text) > len(
-                        article_text
-                    ):
-                        article_text = pw_text
-
-                    article_text = clean_text(
-                        article_text
-                    )
+                text = clean_text(text)
 
             # ----------------------------------------------------------
-            # Second recovery attempt:
-            # reload only if necessary
+            # Recovery 2: reload only if still necessary
             # ----------------------------------------------------------
 
-            if len(article_text) < MIN_ARTICLE_TEXT_LENGTH:
+            if len(text) < MIN_TEXT and attempt == 0:
 
-                if attempt == 0:
-
-                    try:
-
-                        await page.reload(
-                            wait_until="domcontentloaded",
-                            timeout=30_000,
-                        )
-
-                    except Exception:
-                        pass
-
-                    await page.wait_for_timeout(
-                        700
+                try:
+                    await page.reload(
+                        wait_until="domcontentloaded",
+                        timeout=30_000,
                     )
+                except Exception:
+                    pass
 
-                    await wait_for_article_content(
-                        page,
-                        timeout_ms=8_000,
-                    )
+                await page.wait_for_timeout(700)
+                await wait_for_content(page, 8_000)
+                await wait_stable(page)
 
-                    await wait_for_stable_content(
-                        page
-                    )
+                continue
 
-                    continue
+            if len(text) < MIN_TEXT:
 
                 raise RuntimeError(
                     "Source article text is too short "
-                    f"or empty ({len(article_text)} chars)"
+                    f"or empty ({len(text)} chars)"
                 )
-
-            # ----------------------------------------------------------
-            # Final image
-            # ----------------------------------------------------------
-
-            final_image_url = (
-                normalize_url(
-                    summary.url,
-                    image_url,
-                )
-                if image_url
-                else DEFAULT_FALLBACK_IMAGE_URL
-            )
-
-            # ----------------------------------------------------------
-            # Published date
-            # ----------------------------------------------------------
 
             published_at = (
-                extract_published_at(
-                    soup
-                )
+                extract_published_at(soup)
                 or summary.published_at
             )
 
             return SourceArticle(
                 url=summary.url,
                 title=title.strip(),
-                text=article_text,
-                image_url=final_image_url,
+                text=text,
+                image_url=(
+                    normalize_url(summary.url, image)
+                    if image
+                    else DEFAULT_FALLBACK_IMAGE_URL
+                ),
                 published_at=published_at,
             )
 
@@ -1634,27 +1020,20 @@ async def fetch_article(
             last_error = exc
 
             if attempt == 0:
-
-                try:
-                    await page.wait_for_timeout(
-                        1000
-                    )
-                except Exception:
-                    pass
-
+                await page.wait_for_timeout(1000)
                 continue
 
             raise last_error
 
 
 # ============================================================================
-# Browser Context
+# Browser
 # ============================================================================
 
 async def create_browser_context(playwright):
 
     browser = await playwright.chromium.launch(
-        headless=True,
+        headless=True
     )
 
     context = await browser.new_context(
@@ -1670,13 +1049,11 @@ async def create_browser_context(playwright):
         },
     )
 
-    page = await context.new_page()
-
-    return browser, page
+    return browser, await context.new_page()
 
 
 # ============================================================================
-# Article Discovery
+# Discovery
 # ============================================================================
 
 async def collect_article_cards(
@@ -1685,8 +1062,7 @@ async def collect_article_cards(
 ) -> list[ArticleSummary]:
 
     now = datetime.now(timezone.utc)
-
-    results: dict[str, ArticleSummary] = {}
+    results = {}
 
     async def collect():
 
@@ -1724,7 +1100,7 @@ async def collect_article_cards(
                 url=url,
                 title=title[:300],
                 relative_time_text=title,
-                published_at=parse_any_time(
+                published_at=parse_time(
                     title,
                     now,
                 ),
@@ -1735,49 +1111,29 @@ async def collect_article_cards(
     for _ in range(4):
 
         try:
-
-            await page.mouse.wheel(
-                0,
-                3000,
-            )
-
-            await page.wait_for_timeout(
-                700
-            )
-
+            await page.mouse.wheel(0, 3000)
+            await page.wait_for_timeout(700)
             await collect()
-
         except Exception:
             break
 
     return list(results.values())
 
 
-# ============================================================================
-# Browser Fetch
-# ============================================================================
-
 async def discover_articles(
     source_url: str,
     max_articles: int,
-) -> tuple[
-    list[ArticleSummary],
-    list[str],
-]:
+):
 
     candidates = []
     errors = []
 
-    index_url = news_index_url(
-        source_url
-    )
+    index_url = news_index_url(source_url)
 
     async with async_playwright() as playwright:
 
         browser, page = (
-            await create_browser_context(
-                playwright
-            )
+            await create_browser_context(playwright)
         )
 
         try:
@@ -1788,9 +1144,7 @@ async def discover_articles(
                 timeout=30_000,
             )
 
-            await page.wait_for_timeout(
-                1000
-            )
+            await page.wait_for_timeout(1000)
 
             summaries = await collect_article_cards(
                 page,
@@ -1810,9 +1164,8 @@ async def discover_articles(
             candidates = summaries[:max_articles]
 
             if not candidates:
-
                 errors.append(
-                    "No article candidates discovered "
+                    f"No article candidates discovered "
                     f"from {index_url}"
                 )
 
@@ -1823,20 +1176,20 @@ async def discover_articles(
             )
 
         finally:
-
             await browser.close()
 
     return candidates, errors
 
 
+# ============================================================================
+# Fetch Multiple Articles
+# ============================================================================
+
 async def fetch_source_articles(
     source_url: str,
     candidates: list[ArticleSummary],
     max_concurrency: int = 3,
-) -> tuple[
-    list[SourceArticle],
-    list[tuple[str, str]],
-]:
+):
 
     articles = []
     errors = []
@@ -1847,16 +1200,14 @@ async def fetch_source_articles(
     async with async_playwright() as playwright:
 
         browser = await playwright.chromium.launch(
-            headless=True,
+            headless=True
         )
 
         semaphore = asyncio.Semaphore(
             max_concurrency
         )
 
-        async def worker(
-            candidate: ArticleSummary,
-        ):
+        async def worker(candidate):
 
             async with semaphore:
 
@@ -1879,12 +1230,12 @@ async def fetch_source_articles(
 
                 try:
 
-                    article = await fetch_article(
-                        page,
-                        candidate,
+                    articles.append(
+                        await fetch_article(
+                            page,
+                            candidate,
+                        )
                     )
-
-                    articles.append(article)
 
                 except Exception as exc:
 
@@ -1903,10 +1254,7 @@ async def fetch_source_articles(
         try:
 
             await asyncio.gather(
-                *(
-                    worker(candidate)
-                    for candidate in candidates
-                )
+                *(worker(c) for c in candidates)
             )
 
         finally:

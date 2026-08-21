@@ -23,7 +23,7 @@ from models import ArticleSummary, SourceArticle
 # Constants & Helpers
 # ============================================================================
 
-ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶Tree", "01234567890123456789")
+ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 DEFAULT_LOGO_PATTERNS = ("site-logo", "favicon", "default-avatar")
 ARTICLE_ROOT = "/ar/news/magazine"

@@ -8,10 +8,10 @@ Robust scraper for 365Scores Magazine.
 - Extracts article body from:
     1) JSON-LD articleBody
     2) Next.js __NEXT_DATA__
-    3) Semantic article/main containers
+    3) Semantic article/content containers
     4) Multiple paragraph/content selectors
-    5) Direct Playwright innerText fallback
-- Waits for actual article text instead of only waiting for <p>.
+    5) Direct Playwright fallback
+- Uses smart waiting and a lightweight scroll before reload.
 """
 
 from __future__ import annotations
@@ -90,7 +90,6 @@ def is_probable_article_url(url: str) -> bool:
 
     try:
         parsed = urlparse(url)
-
         path = unquote(parsed.path).lower().rstrip("/")
 
         if (
@@ -605,12 +604,13 @@ def _find_text_values(
                 "content",
                 "articlecontent",
                 "article_content",
-                "description",
             }:
 
                 if isinstance(child, str):
 
-                    text = normalize_paragraph(child)
+                    text = normalize_paragraph(
+                        child
+                    )
 
                     if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
                         results.append(text)
@@ -693,10 +693,9 @@ def extract_text_from_json_ld(
 # DOM Article Text Extraction
 # ============================================================================
 
+# Ordered from the most specific article containers
+# to broader containers.
 CONTENT_ROOT_SELECTORS = (
-    "article",
-    "main article",
-    "main",
     "[class*='article-body']",
     "[class*='articleBody']",
     "[class*='article-content']",
@@ -713,6 +712,9 @@ CONTENT_ROOT_SELECTORS = (
     "[class*='newsContent']",
     "[class*='magazine-content']",
     "[class*='magazineContent']",
+    "article",
+    "main article",
+    "main",
 )
 
 
@@ -742,10 +744,6 @@ PARAGRAPH_SELECTORS = (
 def _remove_noise(
     root: BeautifulSoup,
 ) -> None:
-
-    root.select(
-        "script, style, noscript, nav, header, footer, aside"
-    )
 
     for tag in root.select(
         "script, style, noscript, nav, header, footer, aside"
@@ -810,14 +808,21 @@ def _extract_paragraphs_from_root(
             seen.add(text)
             paragraphs.append(text)
 
-    return "\n".join(paragraphs).strip()
+    return "\n".join(
+        paragraphs
+    ).strip()
 
 
 def _extract_best_container_text(
     soup: BeautifulSoup,
 ) -> str:
+    """
+    Try specific article containers first.
 
-    candidates: list[str] = []
+    A specific article container is preferred over a generic
+    main container, even if another container happens to contain
+    more characters.
+    """
 
     for selector in CONTENT_ROOT_SELECTORS:
 
@@ -825,6 +830,8 @@ def _extract_best_container_text(
             nodes = soup.select(selector)
         except Exception:
             continue
+
+        selector_candidates = []
 
         for node in nodes:
 
@@ -835,12 +842,14 @@ def _extract_best_container_text(
 
             _remove_noise(clone)
 
-            paragraph_text = _extract_paragraphs_from_root(
-                clone
+            paragraph_text = (
+                _extract_paragraphs_from_root(
+                    clone
+                )
             )
 
             if len(paragraph_text) >= MIN_ARTICLE_TEXT_LENGTH:
-                candidates.append(
+                selector_candidates.append(
                     paragraph_text
                 )
 
@@ -852,17 +861,20 @@ def _extract_best_container_text(
             )
 
             if len(raw_text) >= MIN_ARTICLE_TEXT_LENGTH:
-                candidates.append(raw_text)
+                selector_candidates.append(
+                    raw_text
+                )
 
-    if not candidates:
-        return ""
+        if selector_candidates:
 
-    # The article container normally produces
-    # the longest coherent block of body text.
-    return max(
-        candidates,
-        key=len,
-    )
+            # Within the same selector, use the
+            # longest coherent result.
+            return max(
+                selector_candidates,
+                key=len,
+            )
+
+    return ""
 
 
 def extract_article_text(
@@ -873,40 +885,46 @@ def extract_article_text(
 
     Priority:
         1) JSON-LD articleBody
-        2) Next.js __NEXT_DATA__
-        3) semantic article/main/content containers
-        4) generic paragraph extraction
+        2) Next.js article/body/content
+        3) Specific article containers
+        4) Generic paragraph extraction
     """
 
     # ------------------------------------------------------------------
     # 1. JSON-LD
     # ------------------------------------------------------------------
 
-    text = extract_text_from_json_ld(soup)
+    text = extract_text_from_json_ld(
+        soup
+    )
 
     if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
         return text
 
     # ------------------------------------------------------------------
-    # 2. Next.js data
+    # 2. Next.js
     # ------------------------------------------------------------------
 
-    text = extract_text_from_next_data(soup)
+    text = extract_text_from_next_data(
+        soup
+    )
 
     if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
         return text
 
     # ------------------------------------------------------------------
-    # 3. Best content container
+    # 3. Specific DOM containers
     # ------------------------------------------------------------------
 
-    text = _extract_best_container_text(soup)
+    text = _extract_best_container_text(
+        soup
+    )
 
     if len(text) >= MIN_ARTICLE_TEXT_LENGTH:
         return text
 
     # ------------------------------------------------------------------
-    # 4. Final generic paragraph extraction
+    # 4. Generic paragraphs
     # ------------------------------------------------------------------
 
     soup_copy = BeautifulSoup(
@@ -914,10 +932,11 @@ def extract_article_text(
         "html.parser",
     )
 
-    _remove_noise(soup_copy)
+    _remove_noise(
+        soup_copy
+    )
 
     paragraphs = []
-
     seen = set()
 
     for p in soup_copy.select("p"):
@@ -948,7 +967,9 @@ def extract_article_text(
         seen.add(txt)
         paragraphs.append(txt)
 
-    return "\n".join(paragraphs).strip()
+    return "\n".join(
+        paragraphs
+    ).strip()
 
 
 # ============================================================================
@@ -964,8 +985,12 @@ async def extract_playwright_fallbacks(
         data = await page.evaluate(
             """
             () => {
+
                 const normalize = (value) => {
-                    if (!value) return '';
+
+                    if (!value) {
+                        return '';
+                    }
 
                     return value
                         .replace(/\\s+/g, ' ')
@@ -973,9 +998,13 @@ async def extract_playwright_fallbacks(
                 };
 
                 const isValidImage = (url) => {
-                    if (!url) return false;
 
-                    const lower = url.toLowerCase();
+                    if (!url) {
+                        return false;
+                    }
+
+                    const lower =
+                        url.toLowerCase();
 
                     if (
                         lower.startsWith('data:') ||
@@ -1010,11 +1039,20 @@ async def extract_playwright_fallbacks(
                     'img'
                 ];
 
-                for (const selector of imageSelectors) {
+                for (
+                    const selector
+                    of imageSelectors
+                ) {
 
-                    const elements = document.querySelectorAll(selector);
+                    const elements =
+                        document.querySelectorAll(
+                            selector
+                        );
 
-                    for (const el of elements) {
+                    for (
+                        const el
+                        of elements
+                    ) {
 
                         let src =
                             el.currentSrc ||
@@ -1026,8 +1064,11 @@ async def extract_playwright_fallbacks(
 
                         if (isValidImage(src)) {
 
-                            if (src.startsWith('//')) {
-                                src = 'https:' + src;
+                            if (
+                                src.startsWith('//')
+                            ) {
+                                src =
+                                    'https:' + src;
                             }
 
                             image = src;
@@ -1041,9 +1082,6 @@ async def extract_playwright_fallbacks(
                 }
 
                 const roots = [
-                    'article',
-                    'main article',
-                    'main',
                     '[class*="article-body"]',
                     '[class*="articleBody"]',
                     '[class*="article-content"]',
@@ -1053,84 +1091,112 @@ async def extract_playwright_fallbacks(
                     '[class*="entry-content"]',
                     '[class*="entryContent"]',
                     '[class*="content-body"]',
-                    '[class*="contentBody"]'
+                    '[class*="contentBody"]',
+                    '[class*="news-content"]',
+                    '[class*="newsContent"]',
+                    'article',
+                    'main article',
+                    'main'
                 ];
 
-                const candidates = [];
+                let text = '';
 
-                for (const selector of roots) {
+                for (
+                    const selector
+                    of roots
+                ) {
 
                     const nodes =
-                        document.querySelectorAll(selector);
+                        document.querySelectorAll(
+                            selector
+                        );
 
-                    for (const node of nodes) {
+                    for (
+                        const node
+                        of nodes
+                    ) {
 
                         const paragraphs =
-                            node.querySelectorAll('p');
+                            node.querySelectorAll(
+                                'p'
+                            );
 
                         const parts = [];
 
-                        for (const p of paragraphs) {
+                        for (
+                            const p
+                            of paragraphs
+                        ) {
 
-                            const text =
-                                normalize(p.innerText || '');
+                            const value =
+                                normalize(
+                                    p.innerText || ''
+                                );
 
-                            if (text.length > 10) {
-                                parts.push(text);
+                            if (
+                                value.length > 10
+                            ) {
+                                parts.push(value);
                             }
                         }
 
-                        if (parts.length) {
+                        const paragraphText =
+                            parts.join('\\n');
 
-                            const combined =
-                                parts.join('\\n');
-
-                            if (combined.length >= 80) {
-                                candidates.push(combined);
-                            }
+                        if (
+                            paragraphText.length >= 80
+                        ) {
+                            text = paragraphText;
+                            break;
                         }
 
                         const raw =
-                            normalize(node.innerText || '');
+                            normalize(
+                                node.innerText || ''
+                            );
 
-                        if (raw.length >= 80) {
-                            candidates.push(raw);
+                        if (
+                            raw.length >= 80
+                        ) {
+                            text = raw;
+                            break;
                         }
+                    }
+
+                    if (text.length >= 80) {
+                        break;
                     }
                 }
 
                 // Generic paragraph fallback.
-                if (!candidates.length) {
+                if (text.length < 80) {
 
                     const parts = [];
 
                     for (
-                        const p of document.querySelectorAll('p')
+                        const p
+                        of document.querySelectorAll(
+                            'p'
+                        )
                     ) {
 
-                        const text =
-                            normalize(p.innerText || '');
+                        const value =
+                            normalize(
+                                p.innerText || ''
+                            );
 
-                        if (text.length > 10) {
-                            parts.push(text);
+                        if (
+                            value.length > 10
+                        ) {
+                            parts.push(value);
                         }
                     }
 
                     if (parts.length) {
-                        candidates.push(
-                            parts.join('\\n')
-                        );
+                        text =
+                            parts.join('\\n');
                     }
                 }
-
-                candidates.sort(
-                    (a, b) => b.length - a.length
-                );
-
-                const text =
-                    candidates.length
-                        ? candidates[0]
-                        : '';
 
                 return {
                     image,
@@ -1178,17 +1244,27 @@ async def wait_for_article_content(
                     'main p'
                 ];
 
-                for (const selector of selectors) {
+                for (
+                    const selector
+                    of selectors
+                ) {
 
                     const elements =
-                        document.querySelectorAll(selector);
+                        document.querySelectorAll(
+                            selector
+                        );
 
                     let total = 0;
 
-                    for (const element of elements) {
+                    for (
+                        const element
+                        of elements
+                    ) {
 
                         const text =
-                            (element.innerText || '').trim();
+                            (
+                                element.innerText || ''
+                            ).trim();
 
                         if (text.length > 10) {
                             total += text.length;
@@ -1200,19 +1276,17 @@ async def wait_for_article_content(
                     }
                 }
 
-                // Check Next.js JSON data.
                 const next =
                     document.querySelector(
                         '#__NEXT_DATA__'
                     );
 
-                if (next && next.textContent) {
-
-                    const raw = next.textContent;
-
-                    if (raw.length > 500) {
-                        return true;
-                    }
+                if (
+                    next &&
+                    next.textContent &&
+                    next.textContent.length > 500
+                ) {
+                    return true;
                 }
 
                 return false;
@@ -1222,7 +1296,6 @@ async def wait_for_article_content(
         )
 
     except Exception:
-        # The caller will still attempt every extraction layer.
         pass
 
 
@@ -1242,27 +1315,39 @@ async def wait_for_stable_content(
                 () => {
 
                     const selectors = [
-                        'article',
-                        'main article',
                         '[class*="article-body"]',
                         '[class*="article-content"]',
                         '[class*="articleContent"]',
                         '[class*="post-content"]',
                         '[class*="postContent"]',
+                        '[class*="content-body"]',
+                        '[class*="contentBody"]',
+                        'article',
+                        'main article',
                         'main'
                     ];
 
                     let best = 0;
 
-                    for (const selector of selectors) {
+                    for (
+                        const selector
+                        of selectors
+                    ) {
 
                         const elements =
-                            document.querySelectorAll(selector);
+                            document.querySelectorAll(
+                                selector
+                            );
 
-                        for (const el of elements) {
+                        for (
+                            const el
+                            of elements
+                        ) {
 
                             const value =
-                                (el.innerText || '').trim().length;
+                                (
+                                    el.innerText || ''
+                                ).trim().length;
 
                             if (value > best) {
                                 best = value;
@@ -1275,7 +1360,10 @@ async def wait_for_stable_content(
                 """
             )
 
-            if current_length == previous_length:
+            if (
+                current_length ==
+                previous_length
+            ):
                 stable_count += 1
             else:
                 stable_count = 0
@@ -1285,7 +1373,9 @@ async def wait_for_stable_content(
             if stable_count >= 2:
                 break
 
-            await page.wait_for_timeout(350)
+            await page.wait_for_timeout(
+                350
+            )
 
         except Exception:
             break
@@ -1312,15 +1402,20 @@ async def fetch_article(
                 timeout=30_000,
             )
 
-            # Give React/Next.js a moment to mount components.
-            await page.wait_for_timeout(700)
+            # Allow React / Next.js to mount.
+            await page.wait_for_timeout(
+                700
+            )
 
-            # Wait for actual article content rather than
-            # waiting only for <p>.
-            await wait_for_article_content(page)
+            # Wait for actual article content.
+            await wait_for_article_content(
+                page
+            )
 
-            # Allow streamed/lazy content to settle.
-            await wait_for_stable_content(page)
+            # Allow dynamic content to settle.
+            await wait_for_stable_content(
+                page
+            )
 
             html_content = await page.content()
 
@@ -1354,20 +1449,26 @@ async def fetch_article(
             # Image
             # ----------------------------------------------------------
 
-            image_url = extract_featured_image(soup)
+            image_url = extract_featured_image(
+                soup
+            )
 
             # ----------------------------------------------------------
             # Article text
             # ----------------------------------------------------------
 
-            article_text = extract_article_text(soup)
+            article_text = extract_article_text(
+                soup
+            )
 
             # ----------------------------------------------------------
-            # Playwright direct fallback
+            # Playwright fallback
             # ----------------------------------------------------------
 
             pw_img, pw_text = (
-                await extract_playwright_fallbacks(page)
+                await extract_playwright_fallbacks(
+                    page
+                )
             )
 
             if not image_url and pw_img:
@@ -1381,22 +1482,104 @@ async def fetch_article(
             )
 
             # ----------------------------------------------------------
-            # If still too short, reload once.
+            # First recovery attempt:
+            # lightweight scroll
             # ----------------------------------------------------------
 
             if len(article_text) < MIN_ARTICLE_TEXT_LENGTH:
 
                 if attempt == 0:
 
-                    await page.wait_for_timeout(1500)
+                    try:
+
+                        await page.evaluate(
+                            """
+                            () => {
+                                window.scrollTo({
+                                    top:
+                                        document.body
+                                            .scrollHeight * 0.6,
+                                    behavior: 'instant'
+                                });
+                            }
+                            """
+                        )
+
+                    except Exception:
+                        pass
+
+                    await page.wait_for_timeout(
+                        1000
+                    )
+
+                    await wait_for_article_content(
+                        page,
+                        timeout_ms=5_000,
+                    )
+
+                    await wait_for_stable_content(
+                        page
+                    )
+
+                    # Re-extract after scroll.
+                    html_content = (
+                        await page.content()
+                    )
+
+                    soup = BeautifulSoup(
+                        html_content,
+                        "html.parser",
+                    )
+
+                    article_text = (
+                        extract_article_text(
+                            soup
+                        )
+                    )
+
+                    pw_img, pw_text = (
+                        await extract_playwright_fallbacks(
+                            page
+                        )
+                    )
+
+                    if (
+                        not image_url
+                        and pw_img
+                    ):
+                        image_url = pw_img
+
+                    if len(pw_text) > len(
+                        article_text
+                    ):
+                        article_text = pw_text
+
+                    article_text = clean_text(
+                        article_text
+                    )
+
+            # ----------------------------------------------------------
+            # Second recovery attempt:
+            # reload only if necessary
+            # ----------------------------------------------------------
+
+            if len(article_text) < MIN_ARTICLE_TEXT_LENGTH:
+
+                if attempt == 0:
 
                     try:
+
                         await page.reload(
                             wait_until="domcontentloaded",
                             timeout=30_000,
                         )
+
                     except Exception:
                         pass
+
+                    await page.wait_for_timeout(
+                        700
+                    )
 
                     await wait_for_article_content(
                         page,
@@ -1410,8 +1593,8 @@ async def fetch_article(
                     continue
 
                 raise RuntimeError(
-                    "Source article text is too short or empty"
-                    f" ({len(article_text)} chars)"
+                    "Source article text is too short "
+                    f"or empty ({len(article_text)} chars)"
                 )
 
             # ----------------------------------------------------------
@@ -1432,7 +1615,9 @@ async def fetch_article(
             # ----------------------------------------------------------
 
             published_at = (
-                extract_published_at(soup)
+                extract_published_at(
+                    soup
+                )
                 or summary.published_at
             )
 
@@ -1449,8 +1634,11 @@ async def fetch_article(
             last_error = exc
 
             if attempt == 0:
+
                 try:
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(
+                        1000
+                    )
                 except Exception:
                     pass
 
@@ -1710,7 +1898,6 @@ async def fetch_source_articles(
                 finally:
 
                     await page.close()
-
                     await context.close()
 
         try:

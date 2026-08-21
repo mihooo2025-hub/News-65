@@ -2,6 +2,7 @@
 scraper_365scores.py
 ====================
 Optimized, concise version for high-concurrency execution on GitHub Actions.
+Includes enhanced image extraction with Referer headers & default fallback support.
 """
 
 from __future__ import annotations
@@ -23,9 +24,12 @@ from models import ArticleSummary, SourceArticle
 # ============================================================================
 
 ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 DEFAULT_LOGO_PATTERNS = ("site-logo", "favicon", "default-avatar")
 ARTICLE_ROOT = "/ar/news/magazine"
+
+# رابط الصورة الافتراضية المعتمدة لشبكة نبض الملاعب عند غياب صورة المقال الأصلية
+DEFAULT_FALLBACK_IMAGE_URL = "https://nabdalmalaeb.com/wp-content/uploads/default-news.jpg"
 
 
 def normalize_url(base_url: str, value: str) -> str:
@@ -141,7 +145,7 @@ def _is_valid_image(url: str) -> bool:
 
 def extract_featured_image(soup: BeautifulSoup) -> str:
     # 1. OpenGraph & Twitter tags
-    meta = first_meta(soup, "og:image", "twitter:image", "image")
+    meta = first_meta(soup, "og:image", "twitter:image", "og:image:secure_url", "image")
     if _is_valid_image(meta):
         if meta.startswith("//"):
             meta = "https:" + meta
@@ -165,8 +169,12 @@ def extract_featured_image(soup: BeautifulSoup) -> str:
             or img.get("data-src")
             or img.get("data-lazy-src")
             or img.get("data-original")
-            or (img.get("srcset", "").split(",")[0].split()[0] if img.get("srcset") else "")
         )
+        if not src and img.get("srcset"):
+            candidates = [c.strip().split()[0] for c in img.get("srcset").split(",") if c.strip()]
+            if candidates:
+                src = candidates[-1]
+
         if src and _is_valid_image(src):
             src = src.strip()
             if src.startswith("//"):
@@ -283,11 +291,14 @@ async def fetch_article(page: Page, summary: ArticleSummary) -> SourceArticle:
         if len(pw_text) > len(article_text):
             article_text = pw_text
 
+    # في حال فشل جميع محاولات استخراج رابط الصورة، نضع رابط الصورة الافتراضية بدلاً من تركها فارغة
+    final_image_url = normalize_url(summary.url, image_url) if image_url else DEFAULT_FALLBACK_IMAGE_URL
+
     return SourceArticle(
         url=summary.url,
         title=title.strip(),
         text=article_text.strip(),
-        image_url=normalize_url(summary.url, image_url),
+        image_url=final_image_url,
         published_at=extract_published_at(soup) or summary.published_at,
     )
 

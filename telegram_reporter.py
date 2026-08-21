@@ -118,7 +118,9 @@ class TelegramReporter:
             for url, error in failures[:10]:
 
                 lines.append(
-                    f"• {_escape(url)}"
+                    f'<a href="{_escape(url)}">'
+                    "رابط الخبر الأصلي"
+                    "</a>"
                 )
 
                 lines.append(

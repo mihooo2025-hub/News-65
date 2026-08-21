@@ -2,7 +2,7 @@
 scraper_365scores.py
 ====================
 Optimized, concise version for high-concurrency execution on GitHub Actions.
-Includes enhanced image extraction with Referer headers & default fallback support.
+Includes enhanced text extraction, fallback image handling, and dynamic wait timers.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from models import ArticleSummary, SourceArticle
 # Constants & Helpers
 # ============================================================================
 
-ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶Tree", "01234567890123456789")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 DEFAULT_LOGO_PATTERNS = ("site-logo", "favicon", "default-avatar")
 ARTICLE_ROOT = "/ar/news/magazine"
@@ -59,7 +59,13 @@ def is_probable_article_url(url: str) -> bool:
             return False
         
         slug = rel_path.split("/")[0]
-        if re.match(r"^(القنوات-الناقلة|إحصائيات|احصائيات|نادي-|منتخب-|فريق-)", slug) or slug in {"الأهداف-العكسية-كأس-العالم", "بطاقة-حمراء-مجموعات"}:
+        
+        # استبعاد صفحات الإحصائيات والأرقام القياسية التي لا تحتوي مقالات نصية
+        ignored_keywords = (
+            "القنوات-الناقلة", "إحصائيات", "احصائيات", "نادي-", "منتخب-", "فريق-",
+            "الأهداف-العكسية", "بطاقة-حمراء", "بطولات-", "أكثر-منتخب", "أقل-منتخب", "أكثر-حارس"
+        )
+        if any(kw in slug for kw in ignored_keywords):
             return False
         return True
     except Exception:
@@ -199,7 +205,7 @@ def extract_published_at(soup: BeautifulSoup) -> datetime | None:
 def extract_article_text(soup: BeautifulSoup) -> str:
     for item in extract_json_ld(soup):
         body = item.get("articleBody")
-        if isinstance(body, str) and len(body) >= 120:
+        if isinstance(body, str) and len(body) >= 80:
             return re.sub(r"\s+", " ", body).strip()
 
     soup_copy = BeautifulSoup(str(soup), "html.parser")
@@ -207,9 +213,10 @@ def extract_article_text(soup: BeautifulSoup) -> str:
         s.decompose()
 
     paragraphs = []
-    for p in soup_copy.select("article p, main p, [class*='article'] p, p"):
+    selectors = "article p, main p, [class*='article'] p, [class*='content'] p, div[class*='text'] p, p"
+    for p in soup_copy.select(selectors):
         txt = re.sub(r"\s+", " ", p.get_text(strip=True))
-        if len(txt) > 15 and txt not in paragraphs and txt not in {"مشاركة", "إعلان", "التعليقات"}:
+        if len(txt) > 10 and txt not in paragraphs and txt not in {"مشاركة", "إعلان", "التعليقات"}:
             paragraphs.append(txt)
 
     return "\n".join(paragraphs).strip()
@@ -227,15 +234,15 @@ async def extract_playwright_fallbacks(page: Page) -> tuple[str, str]:
             for (let el of document.querySelectorAll('article img, main img, img')) {
                 let src = el.currentSrc || el.src || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original');
                 if (isVal(src)) {
-                    if (src.startsWith('//')) src = 'https:' + src;
+                    if (src.startswith('//')) src = 'https:' + src;
                     img = src;
                     break;
                 }
             }
             let text = [];
-            for (let p of document.querySelectorAll('article p, main p, p')) {
+            for (let p of document.querySelectorAll('article p, main p, div[class*="text"] p, p')) {
                 let t = p.innerText ? p.innerText.trim() : '';
-                if (t.length > 15) text.push(t);
+                if (t.length > 10) text.push(t);
             }
             return { image: img, text: text.join('\\n') };
         }""")
@@ -275,8 +282,14 @@ async def collect_article_cards(page: Page, source_url: str) -> list[ArticleSumm
 
 
 async def fetch_article(page: Page, summary: ArticleSummary) -> SourceArticle:
-    await page.goto(summary.url, wait_until="domcontentloaded", timeout=20_000)
-    await page.wait_for_timeout(800)
+    await page.goto(summary.url, wait_until="domcontentloaded", timeout=25_000)
+    
+    try:
+        await page.wait_for_selector("p, article", timeout=3000)
+    except Exception:
+        pass
+        
+    await page.wait_for_timeout(1500)
 
     html_content = await page.content()
     soup = BeautifulSoup(html_content, "html.parser")
@@ -285,13 +298,12 @@ async def fetch_article(page: Page, summary: ArticleSummary) -> SourceArticle:
     image_url = extract_featured_image(soup)
     article_text = extract_article_text(soup)
 
-    if not image_url or len(article_text) < 150:
+    if not image_url or len(article_text) < 80:
         pw_img, pw_text = await extract_playwright_fallbacks(page)
         image_url = image_url or pw_img
         if len(pw_text) > len(article_text):
             article_text = pw_text
 
-    # في حال فشل جميع محاولات استخراج رابط الصورة، نضع رابط الصورة الافتراضية بدلاً من تركها فارغة
     final_image_url = normalize_url(summary.url, image_url) if image_url else DEFAULT_FALLBACK_IMAGE_URL
 
     return SourceArticle(

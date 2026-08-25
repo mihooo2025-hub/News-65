@@ -95,7 +95,9 @@ def main():
 
         time.sleep(DELAY_BETWEEN_REWRITES_SEC)
 
-        media_id = wp.upload_featured_image(detail["image_url"], filename=f"{abs(hash(url))}.jpg")
+        media_id = wp.upload_featured_image(
+            detail["image_url"], filename=f"{abs(hash(url))}.jpg"
+        )
         if not media_id:
             print(f"[تجاهل] تعذّر رفع الصورة البارزة: {rewritten['title']}")
             skipped_no_image += 1
@@ -116,7 +118,10 @@ def main():
             continue
 
         dedup.mark_published(state, url, original_title, rewritten["title"])
-        published_titles.append(rewritten["title"])
+
+        # حفظ عنوان الخبر ورابط المصدر لتضمينهما في تقرير تلجرام
+        published_titles.append((rewritten["title"], url))
+
         print(f"[نُشر] {rewritten['title']}")
 
         time.sleep(DELAY_BETWEEN_PUBLISHES_SEC)
@@ -125,10 +130,17 @@ def main():
 
     if telegram_token and telegram_chat:
         telegram_notify.send_report(
-            telegram_token, telegram_chat, published_titles, failed_count, skipped_no_image
+            telegram_token,
+            telegram_chat,
+            published_titles,
+            failed_count,
+            skipped_no_image,
         )
 
-    print(f"انتهت الدورة. نُشر: {len(published_titles)} | فشل: {failed_count} | بلا صورة: {skipped_no_image}")
+    print(
+        f"انتهت الدورة. نُشر: {len(published_titles)} | "
+        f"فشل: {failed_count} | بلا صورة: {skipped_no_image}"
+    )
 
 
 if __name__ == "__main__":

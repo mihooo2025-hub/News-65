@@ -8,7 +8,7 @@ SOURCE_NEWS_LIST_URL = "https://www.365scores.com/ar/news"
 SOURCE_BASE_URL = "https://www.365scores.com"
 
 # ==== نافذة الفحص ====
-HOURS_WINDOW = 6          # يفحص آخر 6 ساعات من الأخبار في كل دورة
+HOURS_WINDOW = 3          # يفحص آخر 3 ساعات من الأخبار في كل دورة
 RUN_EVERY_HOURS = 1       # تكرار التشغيل (يُضبط أيضًا في workflow الـ GitHub Action)
 
 # ==== فواصل زمنية لتجنب الأخطاء (بالثواني) ====
@@ -55,8 +55,11 @@ ALLOWED_CATEGORIES = CLUB_CATEGORIES + TOPIC_CATEGORIES
 # ==== ملفات الحالة (تُحفظ وتُحدَّث داخل المستودع عبر GitHub Actions) ====
 SEEN_STATE_FILE = "state/seen_articles.json"
 
-# ==== نماذج Gemini ====
-GEMINI_MODEL = "gemini-2.0-flash"
+# ==== نماذج Gemini (أساسي واحتياطي) ====
+GEMINI_MODELS = [
+    "gemini-2.0-flash",         # النموذج الأساسي
+    "gemini-1.5-flash"          # النموذج الاحتياطي
+]
 GEMINI_API_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 )

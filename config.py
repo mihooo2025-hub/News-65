@@ -55,11 +55,12 @@ ALLOWED_CATEGORIES = CLUB_CATEGORIES + TOPIC_CATEGORIES
 # ==== ملفات الحالة (تُحفظ وتُحدَّث داخل المستودع عبر GitHub Actions) ====
 SEEN_STATE_FILE = "state/seen_articles.json"
 
-# ==== نماذج Gemini (أساسي واحتياطي) ====
+# ==== نماذج Gemini (نموذج رئيسي ونموذج احتياطي) ====
 GEMINI_MODELS = [
-    "gemini-2.0-flash",         # النموذج الأساسي
-    "gemini-1.5-flash"          # النموذج الاحتياطي
+    "gemini-3.6-flash",          # النموذج الأساسي (الأول)
+    "gemini-3.5-flash-lite"      # النموذج الاحتياطي (الثاني)
 ]
+
 GEMINI_API_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 )

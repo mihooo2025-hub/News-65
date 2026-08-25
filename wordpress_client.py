@@ -4,6 +4,7 @@
 
 import requests
 from requests.auth import HTTPBasicAuth
+from requests.utils import requote_uri
 
 from config import (
     ALWAYS_INCLUDE_CATEGORY,
@@ -53,10 +54,14 @@ class WordPressClient:
         ثم يرفعها إلى مكتبة وسائط ووردبريس.
         يُعيد media_id أو None إن فشل الرفع.
         """
+        # هيدرز HTTP يجب أن تكون بحروف ASCII فقط، لذلك نُعيد ترميز الرابط
+        # احتياطًا حتى لو وصل غير مُشفّر (يمنع UnicodeEncodeError مع latin-1).
+        safe_image_url = requote_uri(image_url)
+
         try:
             img_resp = requests.get(
-                image_url,
-                headers={"User-Agent": USER_AGENT, "Referer": image_url},
+                safe_image_url,
+                headers={"User-Agent": USER_AGENT, "Referer": safe_image_url},
                 timeout=REQUEST_TIMEOUT_SEC,
             )
             img_resp.raise_for_status()

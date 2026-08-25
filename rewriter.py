@@ -1,6 +1,7 @@
 """
 إعادة صياغة الخبر عبر Google AI Studio (Gemini) مجانًا.
 يوجد مفتاحان: عند فشل الأول (حصة منتهية / خطأ) يتم التبديل تلقائيًا للثاني.
+تعتمد على الانتقال التلقائي بين النموذج الأساسي والنموذج الاحتياطي.
 """
 
 import json
@@ -39,7 +40,7 @@ def _extract_json(text: str) -> dict:
 def _call_gemini(api_key: str, source_title: str, source_body: str) -> dict:
     last_model_error = None
     
-    # التنقل عبر مصفوفة النماذج (الأساسي ثم الاحتياطي)
+    # التجربة على النموذج الأساسي أولاً، وإن فشل ينتقل للنموذج الاحتياطي
     for model_name in GEMINI_MODELS:
         url = GEMINI_API_URL_TEMPLATE.format(model=model_name, key=api_key)
         payload = {
@@ -78,7 +79,7 @@ def _call_gemini(api_key: str, source_title: str, source_body: str) -> dict:
             last_model_error = e
             continue
 
-    raise RuntimeError(f"فشلت كافة نماذج Gemini لهذا المفتاح. آخر خطأ: {last_model_error}")
+    raise RuntimeError(f"فشلت جميع النماذج لـ Gemini. آخر خطأ: {last_model_error}")
 
 
 class QuotaExceededError(Exception):

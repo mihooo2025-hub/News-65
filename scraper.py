@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import requests
+from requests.utils import requote_uri
 from bs4 import BeautifulSoup
 
 from config import (
@@ -23,6 +24,7 @@ from config import (
     USER_AGENT,
     REQUEST_TIMEOUT_SEC,
     HOURS_WINDOW,
+    BLOCKED_IMAGE_URL_SUBSTRINGS,
 )
 
 HEADERS = {
@@ -40,9 +42,12 @@ def fetch_html(url: str) -> str:
 
 
 def _to_abs_url(url: str) -> str:
-    if url.startswith("http"):
-        return url
-    return SOURCE_BASE_URL.rstrip("/") + "/" + url.lstrip("/")
+    if not url.startswith("http"):
+        url = SOURCE_BASE_URL.rstrip("/") + "/" + url.lstrip("/")
+    # يحوّل أي حروف غير آمنة (عربية أو رموز) في الرابط إلى ترميز URL سليم،
+    # مع عدم إعادة ترميز الأجزاء المُشفّرة مسبقًا (يمنع مشاكل الترميز لاحقًا
+    # عند استخدام الرابط داخل هيدرز HTTP مثل Referer).
+    return requote_uri(url)
 
 
 def parse_next_data(html: str):
@@ -156,7 +161,11 @@ GENERIC_IMAGE_HINTS = (
 
 def _looks_generic(image_url: str) -> bool:
     lowered = image_url.lower()
-    return any(hint in lowered for hint in GENERIC_IMAGE_HINTS)
+    if any(hint in lowered for hint in GENERIC_IMAGE_HINTS):
+        return True
+    if any(sub.lower() in lowered for sub in BLOCKED_IMAGE_URL_SUBSTRINGS):
+        return True
+    return False
 
 
 def _extract_jsonld_image(soup: BeautifulSoup):

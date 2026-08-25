@@ -1,73 +1,108 @@
 """
-إعدادات المشروع العامة.
-عدّل هذا الملف فقط لتغيير التصنيفات أو التوقيتات — لا تلمس بقية الملفات.
+إعادة صياغة الخبر عبر Google AI Studio (Gemini) مجانًا.
+يوجد مفتاحان: عند فشل الأول (حصة منتهية / خطأ) يتم التبديل تلقائيًا للثاني.
 """
 
-# ==== مصدر الأخبار ====
-SOURCE_NEWS_LIST_URL = "https://www.365scores.com/ar/news"
-SOURCE_BASE_URL = "https://www.365scores.com"
+import json
+import os
+import re
+import requests
 
-# ==== نافذة الفحص ====
-HOURS_WINDOW = 3          # يفحص آخر 3 ساعات من الأخبار في كل دورة
-RUN_EVERY_HOURS = 1       # تكرار التشغيل (يُضبط أيضًا في workflow الـ GitHub Action)
-
-# ==== فواصل زمنية لتجنب الأخطاء (بالثواني) ====
-DELAY_BETWEEN_REWRITES_SEC = 10
-DELAY_BETWEEN_PUBLISHES_SEC = 3
-
-# ==== دقّة تطابق العناوين لمنع التكرار (fuzzy match) ====
-DEDUP_TITLE_SIMILARITY_THRESHOLD = 0.75
-
-# ==== التصنيفات المسموح بها (كما في لوحة ووردبريس) ====
-CLUB_CATEGORIES = [
-    "ريال مدريد",
-    "برشلونه",
-    "ليفربول",
-    "مانشستر يونايتد",
-    "مانشستر سيتي",
-    "تشلسي",
-    "ارسنال",
-    "بايرن ميونخ",
-    "باريس سان جرمان",
-    "ميلان",
-    "يوفنتوس",
-    "انتر ميلان",
-    "بروسيا دورتموند",
-    "اتليتكو مدريد",
-]
-
-TOPIC_CATEGORIES = [
-    "سوق الانتقالات",
-]
-
-# يُمنع اختيار هذه التصنيفات نهائيًا من قبل الذكاء الاصطناعي
-EXCLUDED_CATEGORIES = [
-    "اهم الاخبار",
-    "مقالات وتحليلات",
-]
-
-# هذا التصنيف (بالإنجليزية) يُختار في كل خبر بدون استثناء (خاص بقسم الرئيسية)
-ALWAYS_INCLUDE_CATEGORY = "Uncategorized"
-
-# القائمة الكاملة المسموح للذكاء الاصطناعي الاختيار منها (بدون الاستثناءات وبدون التصنيف الدائم)
-ALLOWED_CATEGORIES = CLUB_CATEGORIES + TOPIC_CATEGORIES
-
-# ==== ملفات الحالة (تُحفظ وتُحدَّث داخل المستودع عبر GitHub Actions) ====
-SEEN_STATE_FILE = "state/seen_articles.json"
-
-# ==== نماذج Gemini (نموذج رئيسي ونموذج احتياطي) ====
-GEMINI_MODELS = [
-    "gemini-3.6-flash",          # النموذج الأساسي (الأول)
-    "gemini-3.5-flash-lite"      # النموذج الاحتياطي (الثاني)
-]
-
-GEMINI_API_URL_TEMPLATE = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+from config import (
+    ALLOWED_CATEGORIES,
+    GEMINI_MODELS,
+    GEMINI_API_URL_TEMPLATE,
+    REQUEST_TIMEOUT_SEC,
 )
 
-# ==== وسم HTTP ====
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
-REQUEST_TIMEOUT_SEC = 20
+RULES_FILE = os.path.join(os.path.dirname(__file__), "rules_ar.md")
+
+
+def _load_system_prompt() -> str:
+    with open(RULES_FILE, "r", encoding="utf-8") as f:
+        rules = f.read()
+    categories_list = "\n".join(f"- {c}" for c in ALLOWED_CATEGORIES)
+    return rules.replace("{{ALLOWED_CATEGORIES}}", categories_list)
+
+
+SYSTEM_PROMPT = _load_system_prompt()
+
+
+def _extract_json(text: str) -> dict:
+    text = text.strip()
+    # إزالة أسوار Markdown إن وُجدت رغم التعليمات
+    text = re.sub(r"^```(json)?", "", text.strip())
+    text = re.sub(r"```$", "", text.strip())
+    return json.loads(text)
+
+
+def _call_gemini(api_key: str, source_title: str, source_body: str) -> dict:
+    last_model_error = None
+    
+    # التنقل عبر مصفوفة النماذج (الأساسي ثم الاحتياطي)
+    for model_name in GEMINI_MODELS:
+        url = GEMINI_API_URL_TEMPLATE.format(model=model_name, key=api_key)
+        payload = {
+            "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": f"عنوان الخبر الأصلي:\n{source_title}\n\nنص الخبر الأصلي:\n{source_body}"
+                        }
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.4,
+                "response_mime_type": "application/json",
+            },
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT_SEC)
+
+            if resp.status_code == 429:
+                raise QuotaExceededError(f"Gemini quota exceeded (status 429): {resp.text[:200]}")
+            resp.raise_for_status()
+
+            data = resp.json()
+            try:
+                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError) as e:
+                raise ValueError(f"استجابة Gemini غير متوقعة: {data}") from e
+
+            return _extract_json(raw_text)
+
+        except Exception as e:
+            last_model_error = e
+            continue
+
+    raise RuntimeError(f"فشلت كافة نماذج Gemini لهذا المفتاح. آخر خطأ: {last_model_error}")
+
+
+class QuotaExceededError(Exception):
+    pass
+
+
+def rewrite_article(source_title: str, source_body: str, api_key_1: str, api_key_2: str):
+    """
+    يحاول المفتاح الأول، وعند فشله (حصة منتهية أو أي خطأ) يبدّل تلقائيًا للمفتاح الثاني.
+    يُعيد dict: {title, body_html, categories} أو يرفع استثناء إذا فشل الاثنان.
+    """
+    last_error = None
+    for key in (api_key_1, api_key_2):
+        if not key:
+            continue
+        try:
+            result = _call_gemini(key, source_title, source_body)
+            if not all(k in result for k in ("title", "body_html", "categories")):
+                raise ValueError(f"بنية JSON ناقصة من Gemini: {result}")
+            # تصفية أي تصنيف غير مسموح به قد يتسلل رغم التعليمات
+            result["categories"] = [c for c in result["categories"] if c in ALLOWED_CATEGORIES][:3]
+            return result
+        except Exception as e:  # noqa: BLE001 - نريد المتابعة للمفتاح التالي مهما كان الخطأ
+            last_error = e
+            continue
+
+    raise RuntimeError(f"فشلت إعادة الصياغة بكلا المفتاحين. آخر خطأ: {last_error}")

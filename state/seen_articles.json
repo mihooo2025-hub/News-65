@@ -1,3 +1,340 @@
 {
-  "articles": []
+  "articles": [
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%aa%d8%b4%d9%83%d9%8a%d9%84-%d8%a7%d9%84%d8%a3%d9%87%d9%84%d9%8a-%d8%b6%d8%af-%d8%a3%d9%88%d9%83%d9%84%d8%a7%d9%86%d8%af-%d8%a5%d9%81-%d8%b3%d9%8a-%d9%81%d9%8a-%d9%83%d8%a3%d8%b3-%d8%a7%d9%84%d9%82/",
+      "original_title": "تشكيل الأهلي ضد أوكلاند إف سي في كأس القارات 2026",
+      "published_title": "تشكيل الأهلي المنتظر لمواجهة أوكلاند في كأس القارات",
+      "published_at": "2026-08-25T22:17:26.825996+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%b1%d8%af-%d9%81%d8%b9%d9%84-%d8%b1%d9%88%d9%86%d8%a7%d9%84%d8%af%d9%88-%d8%a8%d8%b9%d8%af-%d8%b1%d9%8a%d9%85%d9%88%d9%86%d8%aa%d8%a7%d8%af%d8%a7-%d8%a7%d9%84%d9%86%d8%b5%d8%b1-%d8%b6%d8%af-%d8%a7/",
+      "original_title": "رد فعل رونالدو بعد ريمونتادا النصر ضد الاتفاق",
+      "published_title": "كيف علق رونالدو على ريمونتادا النصر المثيرة؟",
+      "published_at": "2026-08-25T22:17:43.105383+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%ad%d8%b3%d8%a7%d9%85-%d8%b9%d8%a8%d8%af-%d8%a7%d9%84%d9%85%d8%ac%d9%8a%d8%af-%d9%8a%d8%b1%d8%af-%d8%b9%d9%84%d9%89-%d8%a3%d9%86%d8%a8%d8%a7%d8%a1-%d8%a7%d9%86%d8%aa%d9%82%d8%a7%d9%84%d9%87-%d8%a5/",
+      "original_title": "حسام عبد المجيد يرد على أنباء انتقاله إلى الأهلي",
+      "published_title": "حسام عبد المجيد يحسم حقيقة الانتقال للأهلي عبر كوبري بلغاريا",
+      "published_at": "2026-08-25T22:18:00.862671+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%88%d8%a7%d8%b9%d9%8a%d8%af-%d9%88%d9%85%d8%a8%d8%a7%d8%b1%d9%8a%d8%a7%d8%aa-%d8%b9%d8%ac%d9%85%d8%a7%d9%86-%d9%81%d9%8a-%d8%af%d9%88%d8%b1%d9%8a-%d8%a3%d8%a8%d8%b7%d8%a7%d9%84-%d8%a7%d9%84/",
+      "original_title": "مواعيد ومباريات عجمان في دوري أبطال الخليج 2026-2027",
+      "published_title": "مغامرة تاريخية لعجمان في دوري أبطال الخليج",
+      "published_at": "2026-08-25T22:18:17.671020+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a8%d8%b9%d8%af-%d8%a7%d9%84%d8%aa%d9%82%d8%af%d9%85-%d8%a8%d9%87%d8%af%d9%81%d9%8a%d9%86-%d8%a8%d8%a7%d8%a8%d8%a7%d8%b3-%d9%8a%d8%b9%d8%aa%d8%b1%d9%81-%d8%a8%d8%a7%d9%84%d8%b3%d8%a8%d8%a8-%d8%a7/",
+      "original_title": "بعد التقدم بهدفين.. باباس يعترف بالسبب الخفي لسقوط الاتفاق ضد النصر",
+      "published_title": "ما سبب سقوط الاتفاق المفاجئ أمام النصر؟",
+      "published_at": "2026-08-25T22:18:34.691854+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%ba%d8%b6%d8%a8-%d8%a3%d9%85-%d8%aa%d9%83%d8%aa%d9%8a%d9%83%d8%9f-%d9%85%d8%af%d8%b1%d8%a8-%d8%a7%d9%84%d9%86%d8%b5%d8%b1-%d9%8a%d8%a8%d8%b1%d8%b1-%d8%ae%d8%b1%d9%88%d8%ac-%d8%b1%d9%88%d9%86%d8%a7/",
+      "original_title": "غضب أم تكتيك؟ مدرب النصر يبرر خروج رونالدو ضد الاتفاق",
+      "published_title": "كيف فسر مدرب النصر استبدال رونالدو؟",
+      "published_at": "2026-08-25T22:18:50.476081+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a3%d8%ae%d8%a8%d8%a7%d8%b1/",
+      "original_title": "أخبار",
+      "published_title": "ريمونتادا مثيرة للنصر ضد الاتفاق بثلاثية",
+      "published_at": "2026-08-25T22:19:09.001710+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/content-tag/general-news/",
+      "original_title": "أخبار عامة",
+      "published_title": "تطورات مثيرة في الملاعب العربية والعالمية",
+      "published_at": "2026-08-25T22:19:29.707334+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/content-tag/transfer-rumors/",
+      "original_title": "انتقالات وشائعات",
+      "published_title": "تطورات مثيرة في سوق الانتقالات الصيفية",
+      "published_at": "2026-08-25T22:19:49.300529+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/content-tag/post-game/",
+      "original_title": "مقابلات حصرية",
+      "published_title": "غضب كريستيانو رونالدو وطرد بينتو في لقاء النصر والاتفاق",
+      "published_at": "2026-08-25T22:20:07.658287+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/spic/",
+      "original_title": "تقارير خاصة",
+      "published_title": "مقتطفات متنوعة من عالم كرة القدم",
+      "published_at": "2026-08-25T22:20:27.100889+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/tag/%D8%AD%D9%88%D8%A7%D8%B1%D8%A7%D8%AA-365scores/",
+      "original_title": "خاص 365Scores",
+      "published_title": "حقيقة صفقة طرابزون سبور ومستقبل بيدري مع برشلونة",
+      "published_at": "2026-08-25T22:20:45.921646+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d9%83%d8%b1%d8%a9-%d9%82%d8%af%d9%85/",
+      "original_title": "كرة قدم",
+      "published_title": "مفاوضات متقدمة للاتحاد مع نيس الفرنسي",
+      "published_at": "2026-08-25T22:21:04.177766+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%83%d8%b1%d8%a9-%d8%a7%d9%84%d9%82%d8%af%d9%85-%d8%a7%d9%84%d8%a5%d9%86%d8%ac%d9%84%d9%8a%d8%b2%d9%8a%d8%a9/",
+      "original_title": "كرة القدم الإنجليزية",
+      "published_title": "جوائز رابطة المحترفين وصفقات جديدة تشعل الكرة الأوروبية",
+      "published_at": "2026-08-25T22:21:22.669588+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d9%85%d8%a7%d9%86%d8%b4%d8%b3%d8%aa%d8%b1-%d8%b3%d9%8a%d8%aa%d9%8a/",
+      "original_title": "مانشستر سيتي",
+      "published_title": "تفاصيل عقد جيريمي دوكو الجديد مع مانشستر سيتي",
+      "published_at": "2026-08-25T22:21:40.946023+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d9%85%d8%a7%d9%86%d8%b4%d8%b3%d8%aa%d8%b1-%d9%8a%d9%88%d9%86%d8%a7%d9%8a%d8%aa%d8%af/",
+      "original_title": "مانشستر يونايتد",
+      "published_title": "دليلك الشامل لمتابعة أخبار مانشستر يونايتد",
+      "published_at": "2026-08-25T22:21:58.743269+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d9%84%d9%8a%d9%81%d8%b1%d8%a8%d9%88%d9%84/",
+      "original_title": "ليفربول",
+      "published_title": "رحيل مدافع ليفربول الشاب إلى الدوري الاسكتلندي",
+      "published_at": "2026-08-25T22:22:16.855031+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d8%a3%d8%b1%d8%b3%d9%86%d8%a7%d9%84/",
+      "original_title": "أرسنال",
+      "published_title": "موقف مرتقب يجمع أرسنال وريال مدريد",
+      "published_at": "2026-08-25T22:22:35.410047+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d8%b1%d9%8a%d8%a7%d9%84-%d9%85%d8%af%d8%b1%d9%8a%d8%af/",
+      "original_title": "ريال مدريد",
+      "published_title": "تحركات وضغوط بالجملة داخل ريال مدريد",
+      "published_at": "2026-08-25T22:22:53.402267+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d8%a8%d8%b1%d8%b4%d9%84%d9%88%d9%86%d8%a9/",
+      "original_title": "برشلونة",
+      "published_title": "برشلونة يربط لاعبه الشاب بعقد طويل الأجل",
+      "published_at": "2026-08-25T22:23:10.993416+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a7%d9%84%d9%83%d8%b1%d8%a9-%d8%a7%d9%84%d8%b9%d8%b1%d8%a8%d9%8a%d8%a9/",
+      "original_title": "الكرة العربية",
+      "published_title": "تفاصيل متنوعة تخص الكرة العربية والقارية",
+      "published_at": "2026-08-25T22:23:28.713300+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a%d8%a9/",
+      "original_title": "كرة القدم السعودية",
+      "published_title": "مستجدات مثيرة في ملاعب الدوري السعودي",
+      "published_at": "2026-08-25T22:23:47.975809+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a%d8%a9/al-itthad/",
+      "original_title": "الاتحاد",
+      "published_title": "تطورات مثيرة وصفقات جديدة في الدوري السعودي",
+      "published_at": "2026-08-25T22:24:06.173105+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a%d8%a9/al-nassr/",
+      "original_title": "النصر",
+      "published_title": "ريمونتادا النصر وردة فعل رونالدو ومستقبل بنزيما",
+      "published_at": "2026-08-25T22:24:24.800935+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a%d8%a9/al-hilal/",
+      "original_title": "الهلال",
+      "published_title": "مستقبل بنزيما وتطورات صفقات الهلال في الدوري السعودي",
+      "published_at": "2026-08-25T22:24:42.455404+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a%d8%a9/al-ahli/",
+      "original_title": "الأهلي",
+      "published_title": "استعدادات مكثفة لمواجهة الأهلي وأوكلاند سيتي",
+      "published_at": "2026-08-25T22:24:59.939727+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a7%d9%84%d9%86%d8%a7%d8%af%d9%8a-%d8%a7%d9%84%d8%a3%d9%87%d9%84%d9%8a/",
+      "original_title": "النادي الأهلي",
+      "published_title": "جدل واسع حول ركلة جزاء الأهلي",
+      "published_at": "2026-08-25T22:25:17.442118+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d8%a7%d9%84%d8%b2%d9%85%d8%a7%d9%84%d9%83/",
+      "original_title": "نادي الزمالك",
+      "published_title": "حكم دولي لإدارة مباراة الزمالك والبنك الأهلي",
+      "published_at": "2026-08-25T22:25:34.972644+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d8%a7%d9%84%d8%b1%d8%ac%d8%a7%d8%a1-%d8%a7%d9%84%d8%a8%d9%8a%d8%b6%d8%a7%d9%88%d9%8a-%d8%a7%d9%84%d9%85%d8%ba%d8%b1%d8%a8%d9%8a/",
+      "original_title": "نادي الرجاء البيضاوي المغربي",
+      "published_title": "تحركات مكثفة لنادي الرجاء في سوق الانتقالات",
+      "published_at": "2026-08-25T22:25:52.391910+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%86%d8%a7%d8%af%d9%8a-%d8%a7%d9%84%d9%88%d8%af%d8%a7%d8%af-%d8%a7%d9%84%d8%a8%d9%8a%d8%b6%d8%a7%d9%88%d9%8a-%d8%a7%d9%84%d9%85%d8%ba%d8%b1%d8%a8%d9%8a/",
+      "original_title": "نادي الوداد البيضاوي",
+      "published_title": "مستقبل حكيم زياش وتحركات مكثفة في الوداد",
+      "published_at": "2026-08-25T22:26:09.911988+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a8%d8%b7%d9%88%d9%84%d8%a7%d8%aa-%d9%88%d8%af%d9%88%d8%b1%d9%8a%d8%a7%d8%aa/",
+      "original_title": "بطولات ودوريات",
+      "published_title": "محطة جديدة لنجم تشيلسي وإنجازات بارزة بالدوري الإنجليزي",
+      "published_at": "2026-08-25T22:26:34.320513+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a7%d9%84%d8%af%d9%88%d8%b1%d9%8a-%d8%a7%d9%84%d8%a5%d9%86%d8%ac%d9%84%d9%8a%d8%b2%d9%8a-%d8%a7%d9%84%d9%85%d9%85%d8%aa%d8%a7%d8%b2/",
+      "original_title": "الدوري الإنجليزي",
+      "published_title": "تحركات حاسمة وصفقات جديدة في الميركاتو",
+      "published_at": "2026-08-25T22:26:52.693170+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a7%d9%84%d8%af%d9%88%d8%b1%d9%8a-%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a-%d8%af%d9%88%d8%b1%d9%8a-%d8%b1%d9%88%d8%b4%d9%86/",
+      "original_title": "الدوري السعودي",
+      "published_title": "تحركات مثيرة وأحداث ساخنة في الدوري السعودي",
+      "published_at": "2026-08-25T22:27:10.767671+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a7%d9%84%d8%af%d9%88%d8%b1%d9%8a-%d8%a7%d9%84%d9%85%d8%b5%d8%b1%d9%8a-%d8%a7%d9%84%d9%85%d9%85%d8%aa%d8%a7%d8%b2/",
+      "original_title": "الدوري المصري الممتاز",
+      "published_title": "ضربة جديدة في الأهلي وتطورات أزمة الزمالك",
+      "published_at": "2026-08-25T22:27:28.537033+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%a7%d9%84%d8%af%d9%88%d8%b1%d9%8a-%d8%a7%d9%84%d9%85%d8%ba%d8%b1%d8%a8%d9%8a-2/",
+      "original_title": "الدوري المغربي",
+      "published_title": "تحركات واسعة لأندية الدوري المغربي في الميركاتو",
+      "published_at": "2026-08-25T22:27:47.108072+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%af%d9%88%d8%b1%d9%8a-%d8%a3%d8%a8%d8%b7%d8%a7%d9%84-%d8%a3%d9%88%d8%b1%d9%88%d8%a8%d8%a7-%d8%aa%d8%b4%d8%a7%d9%85%d8%a8%d9%8a%d9%88%d9%86%d8%b2%d9%84%d9%8a%d8%ac/",
+      "original_title": "دوري أبطال أوروبا",
+      "published_title": "مشاركات جديدة وفعاليات منتظرة في الكرة الأوروبية",
+      "published_at": "2026-08-25T22:28:05.228141+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%af%d9%88%d8%b1%d9%8a-%d8%a3%d8%a8%d8%b7%d8%a7%d9%84-%d8%a2%d8%b3%d9%8a%d8%a7-%d9%84%d9%84%d9%86%d8%ae%d8%a8%d8%a9-2025/",
+      "original_title": "دوري أبطال آسيا للنخبة",
+      "published_title": "نتائج قرعة دوري أبطال آسيا للنخبة",
+      "published_at": "2026-08-25T22:28:23.127872+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%af%d9%88%d8%b1%d9%8a-%d8%a3%d8%a8%d8%b7%d8%a7%d9%84-%d8%a5%d9%81%d8%b1%d9%8a%d9%82%d9%8a%d8%a7-%d9%84%d9%84%d8%a3%d9%86%d8%af%d9%8a%d8%a9/",
+      "original_title": "دوري أبطال إفريقيا",
+      "published_title": "نتائج قرعة الدور التمهيدي لدوري أبطال إفريقيا",
+      "published_at": "2026-08-25T22:28:40.912693+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a7%d9%84%d9%85%d9%86%d8%aa%d8%ae%d8%a8%d8%a7%d8%aa-%d8%a7%d9%84%d8%b9%d8%b1%d8%a8%d9%8a%d8%a9/",
+      "original_title": "المنتخبات العربية",
+      "published_title": "زلاتكو داليتش مدربًا لمنتخب الإمارات رسميًا",
+      "published_at": "2026-08-25T22:28:58.963149+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d8%a7%d9%84%d8%b3%d8%b9%d9%88%d8%af%d9%8a%d8%a9-%d8%a7%d9%84%d8%b5%d9%82%d9%88%d8%b1-%d8%a7%d9%84%d8%ae%d8%b6%d8%b1/",
+      "original_title": "منتخب السعودية – الصقور الخضر",
+      "published_title": "مستجدات متنوعة وأخبار حاسمة تخص الكرة السعودية",
+      "published_at": "2026-08-25T22:29:17.110796+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d9%85%d8%b5%d8%b1-%d8%a7%d9%84%d9%81%d8%b1%d8%a7%d8%b9%d9%86%d8%a9/",
+      "original_title": "منتخب مصر – الفراعنة",
+      "published_title": "غموض يحيط بمستقبل سعفان الصغير مع الفراعنة",
+      "published_at": "2026-08-25T22:29:34.790585+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d8%a7%d9%84%d9%85%d8%ba%d8%b1%d8%a8-%d8%a3%d8%b3%d9%88%d8%af-%d8%a7%d9%84%d8%a3%d8%b7%d9%84%d8%b3/",
+      "original_title": "منتخب المغرب – أسود الأطلس",
+      "published_title": "مستقبل غامض وتحولات جديدة لنجوم منتخب المغرب",
+      "published_at": "2026-08-25T22:29:53.095636+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d8%a7%d9%84%d8%a5%d9%85%d8%a7%d8%b1%d8%a7%d8%aa-%d8%a7%d9%84%d8%a3%d8%a8%d9%8a%d8%b6/",
+      "original_title": "منتخب الإمارات – الأبيض",
+      "published_title": "زلاتكو داليتش مدرباً لمنتخب الإمارات",
+      "published_at": "2026-08-25T22:30:10.632545+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d8%a7%d9%84%d8%b9%d8%b1%d8%a7%d9%82-%d8%a3%d8%b3%d9%88%d8%af-%d8%a7%d9%84%d8%b1%d8%a7%d9%81%d8%af%d9%8a%d9%86/",
+      "original_title": "منتخب العراق – أسود الرافدين",
+      "published_title": "مستجدات متنوعة تخص الكرة العراقية",
+      "published_at": "2026-08-25T22:30:28.087550+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d8%a7%d9%84%d8%ac%d8%b2%d8%a7%d8%a6%d8%b1-%d9%85%d8%ad%d8%a7%d8%b1%d8%a8%d9%88-%d8%a7%d9%84%d8%b5%d8%ad%d8%b1%d8%a7%d8%a1/",
+      "original_title": "منتخب الجزائر – محاربو الصحراء",
+      "published_title": "تطورات حاسمة ومستقبل غامض لنجوم منتخب الجزائر",
+      "published_at": "2026-08-25T22:30:45.411647+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d9%85%d9%86%d8%aa%d8%ae%d8%a8-%d8%a7%d9%84%d8%a3%d8%b1%d8%af%d9%86-%d8%a7%d9%84%d9%86%d8%b4%d8%a7%d9%85%d9%89/",
+      "original_title": "منتخب الأردن – النشامى",
+      "published_title": "تفاصيل جديدة عن المدرب المغربي بادو الزاكي",
+      "published_at": "2026-08-25T22:31:03.461126+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/other/",
+      "original_title": "رياضات أخرى",
+      "published_title": "إنجاز تاريخي لنادي دبي لكرة السلة",
+      "published_at": "2026-08-25T22:31:21.738511+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/category/%d8%a3%d8%b1%d8%b4%d9%8a%d9%81-%d9%83%d8%b1%d8%a9-%d8%a7%d9%84%d9%82%d8%af%d9%85/",
+      "original_title": "أرشيف كرة القدم",
+      "published_title": "محطات تاريخية وأبرز أرقام كأس العالم",
+      "published_at": "2026-08-25T22:31:39.791186+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/",
+      "original_title": "الرئيسية",
+      "published_title": "مباريات حاسمة وأبرز المواجهات الودية اليوم",
+      "published_at": "2026-08-25T22:31:55.829554+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/tag/%d8%a7%d9%86%d8%aa%d9%82%d8%a7%d9%84%d8%a7%d8%aa/",
+      "original_title": "انتقالات",
+      "published_title": "تحركات واسعة لأندية أوروبا وصفقات جديدة",
+      "published_at": "2026-08-25T22:32:14.015321+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/author/momostafa/",
+      "original_title": "محمد مصطفى",
+      "published_title": "مواجهات حاسمة ومرتقبة في البطولات المحلية والقارية",
+      "published_at": "2026-08-25T22:32:32.138908+00:00"
+    },
+    {
+      "url": "https://api.whatsapp.com/send?text=%D8%AA%D9%82%D8%A7%D8%B1%D9%8A%D8%B1-%20%D8%AC%D8%A7%D9%86%D9%84%D9%88%D9%8A%D8%AC%D9%8A%20%D8%A8%D9%88%D9%81%D9%88%D9%86%20%D9%8A%D9%82%D8%AA%D8%B1%D8%A8%20%D9%85%D9%86%20%D8%A7%D8%B9%D8%AA%D8%B2%D8%A7%D9%84%20%D9%83%D8%B1%D8%A9%20%D8%A7%D9%84%D9%82%D8%AF%D9%85%20https://www.365scores.com/ar/news/magazine/?p=161874",
+      "original_title": "واتساب",
+      "published_title": "تقارير تؤكد اقتراب بوفون من تعليق حذاءه",
+      "published_at": "2026-08-25T22:32:48.448930+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/%d8%ac%d9%85%d9%8a%d8%b9-%d8%a7%d9%86%d8%aa%d9%82%d8%a7%d9%84%d8%a7%d8%aa-%d8%b5%d9%8a%d9%81-2023-%d9%81%d9%8a-%d8%a7%d9%84%d8%af%d9%88%d8%b1%d9%8a-%d8%a7%d9%84%d8%a5%d8%b3%d8%a8%d8%a7%d9%86%d9%8a/",
+      "original_title": "انتقالات الدوري الإسباني",
+      "published_title": "تفاصيل ومواعيد سوق الانتقالات الصيفية في الدوري الإسباني",
+      "published_at": "2026-08-25T22:33:09.623054+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/tag/%d8%a8%d8%a7%d8%b1%d9%85%d8%a7/",
+      "original_title": "بارما",
+      "published_title": "تعثر صفقة انتقال حارس بارما إلى باريس سان جيرمان",
+      "published_at": "2026-08-25T22:33:27.689956+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/tag/%d8%ac%d9%8a%d8%a7%d9%86%d9%84%d9%88%d9%8a%d8%ac%d9%8a-%d8%a8%d9%88%d9%81%d9%88%d9%86/",
+      "original_title": "جيانلويجي بوفون",
+      "published_title": "استقالة رسمية للأسطورة بوفون من منتخب إيطاليا",
+      "published_at": "2026-08-25T22:33:45.716116+00:00"
+    },
+    {
+      "url": "https://www.365scores.com/ar/news/magazine/tag/%d9%8a%d9%88%d9%81%d9%86%d8%aa%d9%88%d8%b3/",
+      "original_title": "يوفنتوس",
+      "published_title": "رحيل دي جريجوريو وضربة موجعة ليوفنتوس",
+      "published_at": "2026-08-25T22:34:04.144419+00:00"
+    }
+  ]
 }

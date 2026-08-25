@@ -8,7 +8,7 @@ SOURCE_NEWS_LIST_URL = "https://www.365scores.com/ar/news"
 SOURCE_BASE_URL = "https://www.365scores.com"
 
 # ==== نافذة الفحص ====
-HOURS_WINDOW = 3          # يفحص آخر 3 ساعات من الأخبار في كل دورة
+HOURS_WINDOW = 6          # يفحص آخر 6 ساعات من الأخبار في كل دورة
 RUN_EVERY_HOURS = 1       # تكرار التشغيل (يُضبط أيضًا في workflow الـ GitHub Action)
 
 # ==== فواصل زمنية لتجنب الأخطاء (بالثواني) ====
@@ -55,15 +55,16 @@ ALLOWED_CATEGORIES = CLUB_CATEGORIES + TOPIC_CATEGORIES
 # ==== ملفات الحالة (تُحفظ وتُحدَّث داخل المستودع عبر GitHub Actions) ====
 SEEN_STATE_FILE = "state/seen_articles.json"
 
-# ==== نماذج Gemini (الأول أساسي والثاني احتياطي) ====
-GEMINI_MODELS = [
-    "gemini-3.6-flash",          # النموذج الأساسي (الأول)
-    "gemini-3.5-flash-lite"      # النموذج الاحتياطي (الثاني)
-]
-
+# ==== نماذج Gemini ====
+GEMINI_MODEL = "gemini-2.0-flash"
 GEMINI_API_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 )
+
+# روابط أو أجزاء من روابط لصور افتراضية معروفة يستخدمها 365scores عند عدم وجود صورة خاصة
+# بالمقال (مثل بطاقة "365 أخبار" العامة). أضف هنا أي جزء من رابط الصورة الافتراضية
+# التي تلاحظها متكررة في مقالات مختلفة، وسيتم تجاهلها تلقائيًا.
+BLOCKED_IMAGE_URL_SUBSTRINGS = []
 
 # ==== وسم HTTP ====
 USER_AGENT = (

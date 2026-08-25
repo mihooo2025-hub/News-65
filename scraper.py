@@ -113,4 +113,162 @@ def extract_articles_from_html(html: str):
 def get_recent_articles():
     """
     يُعيد قائمة الأخبار المتاحة في آخر HOURS_WINDOW ساعات.
-    إذا تعذر تحديد وقت النشر لخبر ما، يتم تضمينه احتياطًا (
+    إذا تعذر تحديد وقت النشر لخبر ما، يتم تضمينه احتياطًا (أفضل من تفويته)
+    وتُترك عملية الفلترة النهائية لمرحلة إزالة التكرار (dedup) لضمان عدم إعادة نشره لاحقًا.
+    """
+    html = fetch_html(SOURCE_NEWS_LIST_URL)
+
+    articles = parse_next_data(html)
+    if not articles:
+        articles = extract_articles_from_html(html)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_WINDOW)
+    recent = []
+    for art in articles:
+        pub = art.get("published_at")
+        if pub:
+            try:
+                pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+                if pub_dt < cutoff:
+                    continue
+            except ValueError:
+                pass
+        recent.append(art)
+
+    return recent
+
+
+# كلمات تدل أن الصورة عبارة عن شعار/بطاقة مشاركة عامة وليست صورة الخبر الفعلية
+GENERIC_IMAGE_HINTS = (
+    "logo",
+    "default",
+    "placeholder",
+    "share",
+    "og-image",
+    "og_image",
+    "social",
+    "cover",
+    "favicon",
+    "app-icon",
+    "appicon",
+)
+
+
+def _looks_generic(image_url: str) -> bool:
+    lowered = image_url.lower()
+    return any(hint in lowered for hint in GENERIC_IMAGE_HINTS)
+
+
+def _extract_jsonld_image(soup: BeautifulSoup):
+    """
+    يبحث عن صورة الخبر داخل بيانات JSON-LD المهيكلة (schema.org/NewsArticle)،
+    وهي غالبًا أدق مصدر لصورة الخبر الفعلية لأنها مخصّصة للمقال نفسه وليست بطاقة مشاركة عامة.
+    """
+    for script in soup.find_all("script", type="application/ld+json"):
+        if not script.string:
+            continue
+        try:
+            data = json.loads(script.string)
+        except json.JSONDecodeError:
+            continue
+
+        candidates = data if isinstance(data, list) else [data]
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            image = item.get("image")
+            if isinstance(image, str):
+                return image
+            if isinstance(image, dict) and isinstance(image.get("url"), str):
+                return image["url"]
+            if isinstance(image, list) and image:
+                first = image[0]
+                if isinstance(first, str):
+                    return first
+                if isinstance(first, dict) and isinstance(first.get("url"), str):
+                    return first["url"]
+    return None
+
+
+def _extract_in_article_image(soup: BeautifulSoup):
+    """
+    خطة احتياطية أخيرة: يبحث عن أول صورة حقيقية داخل حاوية محتوى المقال
+    (article/main أو أي عنصر بكلاس يحتوي article/content/story)، متجاهلًا الأيقونات الصغيرة.
+    """
+    containers = soup.find_all(["article", "main"])
+    containers += soup.find_all(
+        lambda tag: tag.name in ("div", "section")
+        and tag.get("class")
+        and any(
+            key in " ".join(tag.get("class")).lower()
+            for key in ("article", "content", "story", "post")
+        )
+    )
+
+    for container in containers:
+        for img in container.find_all("img"):
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
+            if not src or src.startswith("data:"):
+                continue
+            if _looks_generic(src):
+                continue
+            # تجاهل الصور الصغيرة جدًا إن كانت الأبعاد معروفة (أيقونات/فواصل)
+            try:
+                width = int(img.get("width", 0))
+                height = int(img.get("height", 0))
+                if 0 < width < 120 or 0 < height < 120:
+                    continue
+            except ValueError:
+                pass
+            return src
+    return None
+
+
+def fetch_article_detail(url: str):
+    """
+    يجلب نص الخبر الكامل والصورة البارزة من صفحة المقال.
+
+    ترتيب البحث عن الصورة البارزة (من الأدق إلى الأقل دقة):
+      1) بيانات JSON-LD المهيكلة (schema.org) — الأدق لأنها مخصصة لهذا المقال تحديدًا.
+      2) وسم og:image، بشرط ألا يكون صورة عامة معروفة (شعار/بطاقة مشاركة افتراضية).
+      3) أول صورة حقيقية داخل محتوى المقال نفسه.
+
+    يُعيد dict: {title, image_url, body_text} أو None إذا تعذر جلب المحتوى.
+    """
+    html = fetch_html(url)
+    soup = BeautifulSoup(html, "html.parser")
+
+    def meta(prop):
+        tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+        return tag["content"].strip() if tag and tag.get("content") else None
+
+    title = meta("og:title") or (soup.title.string.strip() if soup.title else None)
+
+    # محاولة استخراج نص المقال الكامل من جسم الصفحة
+    body_candidates = soup.find_all(["p"])
+    body_text = "\n".join(
+        p.get_text(strip=True) for p in body_candidates if len(p.get_text(strip=True)) > 40
+    )
+
+    if not body_text:
+        # احتياط: استخدم وصف meta إن لم نجد فقرات كافية
+        body_text = meta("og:description") or ""
+
+    if not title or not body_text:
+        return None
+
+    image_url = _extract_jsonld_image(soup)
+
+    if not image_url:
+        og_image = meta("og:image")
+        if og_image and not _looks_generic(og_image):
+            image_url = og_image
+
+    if not image_url:
+        image_url = _extract_in_article_image(soup)
+
+    if not image_url:
+        # لا توجد صورة بارزة فعلية → يُتجاهل الخبر بحسب الشرط المطلوب
+        return {"title": title, "image_url": None, "body_text": body_text}
+
+    return {"title": title, "image_url": _to_abs_url(image_url), "body_text": body_text}

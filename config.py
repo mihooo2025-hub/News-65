@@ -55,7 +55,7 @@ ALLOWED_CATEGORIES = CLUB_CATEGORIES + TOPIC_CATEGORIES
 # ==== ملفات الحالة (تُحفظ وتُحدَّث داخل المستودع عبر GitHub Actions) ====
 SEEN_STATE_FILE = "state/seen_articles.json"
 
-# ==== نماذج Gemini (نموذج رئيسي ونموذج احتياطي) ====
+# ==== نماذج Gemini (الأول أساسي والثاني احتياطي) ====
 GEMINI_MODELS = [
     "gemini-3.6-flash",          # النموذج الأساسي (الأول)
     "gemini-3.5-flash-lite"      # النموذج الاحتياطي (الثاني)

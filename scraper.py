@@ -34,6 +34,57 @@ HEADERS = {
 
 ARTICLE_URL_PATTERN = re.compile(r"/ar/(article|news)/[^\"'\s>]+")
 
+# أجزاء مسار تدل أن الرابط لصفحة "قسم/تجميع" (فريق، بطولة، منتخب، لاعب...)
+# وليس خبرًا مفردًا، حتى لو كان الرابط يحتوي كلمة news/article في مكان ما.
+HUB_PATH_KEYWORDS = (
+    "/team/",
+    "/teams/",
+    "/competition/",
+    "/competitions/",
+    "/league/",
+    "/leagues/",
+    "/player/",
+    "/players/",
+    "/standings",
+    "/fixtures",
+    "/tournament/",
+    "/tournaments/",
+    "/category/",
+    "/tag/",
+    "/tags/",
+)
+
+
+def _is_probable_single_article(url: str, title: str) -> bool:
+    """
+    يميّز بين رابط خبر حقيقي ورابط صفحة قسم/فريق/بطولة تجميعية.
+
+    شروط اعتبار الرابط خبرًا حقيقيًا:
+      1) الرابط يحتوي مقطع /ar/news/ أو /ar/article/.
+      2) الرابط لا يحتوي أي من كلمات صفحات التجميع (فريق/بطولة/لاعب...).
+      3) العنوان جملة كاملة (عدة كلمات) وليس مجرد اسم فريق أو بطولة قصير
+         (عناوين الأخبار الحقيقية على 365scores طويلة ووصفية، بعكس عناوين
+         صفحات الفرق والبطولات التي تكون اسم الكيان فقط).
+      4) نهاية الرابط (slug) تحتوي عدة كلمات مفصولة بشرطات، لا كلمة أو كلمتين فقط.
+    """
+    if not ARTICLE_URL_PATTERN.search(url):
+        return False
+
+    lowered_url = url.lower()
+    if any(keyword in lowered_url for keyword in HUB_PATH_KEYWORDS):
+        return False
+
+    word_count = len(title.split())
+    if word_count < 4:
+        return False
+
+    slug = url.rstrip("/").split("/")[-1]
+    if slug.count("-") < 2 and slug.count("%") < 6:
+        # عنوان قصير بدون تفاصيل كافية في الرابط غالبًا صفحة كيان (فريق/بطولة) وليس خبرًا
+        return False
+
+    return True
+
 
 def fetch_html(url: str) -> str:
     resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SEC)
@@ -75,13 +126,16 @@ def parse_next_data(html: str):
             has_link = isinstance(node.get("url"), str) or isinstance(node.get("slug"), str)
             if has_title and has_link:
                 url = node.get("url") or node.get("slug")
-                found.append(
-                    {
-                        "title": node["title"].strip(),
-                        "url": _to_abs_url(url),
-                        "published_at": node.get("date") or node.get("publishDate"),
-                    }
-                )
+                abs_url = _to_abs_url(url)
+                title = node["title"].strip()
+                if _is_probable_single_article(abs_url, title):
+                    found.append(
+                        {
+                            "title": title,
+                            "url": abs_url,
+                            "published_at": node.get("date") or node.get("publishDate"),
+                        }
+                    )
             for v in node.values():
                 walk(v)
         elif isinstance(node, list):
@@ -108,6 +162,8 @@ def extract_articles_from_html(html: str):
                 continue
             title = a.get_text(strip=True)
             if not title:
+                continue
+            if not _is_probable_single_article(abs_url, title):
                 continue
             seen_urls.add(abs_url)
             results.append({"title": title, "url": abs_url, "published_at": None})
